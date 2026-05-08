@@ -10,6 +10,7 @@ import '../../features/auth/presentation/screens/splash_screen.dart';
 import '../../features/home/presentation/screens/main_shell_screen.dart';
 import '../../features/home/presentation/screens/placeholder_screen.dart';
 import '../../features/map/presentation/screens/map_screen.dart';
+import '../../features/tasks/presentation/screens/add_task_screen.dart';
 
 class AppRouter {
   static GoRouter create(AuthProvider auth) {
@@ -24,7 +25,8 @@ class AppRouter {
           return loc == '/' ? null : '/';
         }
 
-        final isAuthRoute = loc == '/login' ||
+        final isAuthRoute =
+            loc == '/login' ||
             loc == '/register' ||
             loc == '/forgot-password' ||
             loc.startsWith('/reset-password');
@@ -42,6 +44,7 @@ class AppRouter {
           '/reports',
           '/profile',
           '/organizations',
+          '/tasks/add',
         };
         if (protected.contains(loc) || loc == '/') return '/login';
         return null;
@@ -60,6 +63,7 @@ class AppRouter {
               ResetPasswordScreen(token: state.uri.queryParameters['token']),
         ),
         GoRoute(path: '/home', builder: (_, __) => const MainShellScreen()),
+        GoRoute(path: '/tasks/add', builder: (_, __) => const AddTaskScreen()),
         GoRoute(
           path: '/planner',
           builder: (_, __) => const PlaceholderScreen(
@@ -68,10 +72,7 @@ class AppRouter {
             icon: Icons.checklist_rtl,
           ),
         ),
-        GoRoute(
-          path: '/map',
-          builder: (_, __) => const MapScreen(),
-        ),
+        GoRoute(path: '/map', builder: (_, __) => const MapScreen()),
         GoRoute(
           path: '/reports',
           builder: (_, __) => const PlaceholderScreen(

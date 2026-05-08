@@ -23,23 +23,15 @@ class _MainShellScreenState extends State<MainShellScreen> {
 
   void _go(int i) => setState(() => _index = i);
 
-  void _showAddTaskSheet() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AppColors.cardBg,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (_) => const _AddTaskSheet(),
-    );
+  void _openAddTaskScreen() {
+    context.push('/tasks/add');
   }
 
   @override
   Widget build(BuildContext context) {
     final pages = <Widget>[
       HomeScreen(
-        onAddTask: _showAddTaskSheet,
+        onAddTask: _openAddTaskScreen,
         onOpenPlanner: () => _go(1),
         onOpenMap: () => _go(2),
         onOpenReports: () => context.push('/reports'),
@@ -59,69 +51,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: IndexedStack(index: _index, children: pages),
-      bottomNavigationBar: MainBottomNav(
-        currentIndex: _index,
-        onTap: _go,
-      ),
-    );
-  }
-}
-
-class _AddTaskSheet extends StatelessWidget {
-  const _AddTaskSheet();
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-      ),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: AppColors.border,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 18),
-              const Text(
-                'Шинэ ажил нэмэх',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textDark,
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Ажил төлөвлөх модуль удахгүй нэмэгдэнэ. Энэ хэсгээс to-do, маршрут, цаг хэмнэлтийг ухаалгаар тооцох болно.',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: AppColors.textMuted,
-                  height: 1.45,
-                ),
-              ),
-              const SizedBox(height: 20),
-              AppButton(
-                label: 'Хаах',
-                outlined: true,
-                onPressed: () => Navigator.of(context).pop(),
-              ),
-            ],
-          ),
-        ),
-      ),
+      bottomNavigationBar: MainBottomNav(currentIndex: _index, onTap: _go),
     );
   }
 }
@@ -129,8 +59,7 @@ class _AddTaskSheet extends StatelessWidget {
 class _ProfileTab extends StatelessWidget {
   const _ProfileTab();
 
-  String _userTypeLabel(String key) =>
-      AppStrings.userTypeLabels[key] ?? key;
+  String _userTypeLabel(String key) => AppStrings.userTypeLabels[key] ?? key;
 
   @override
   Widget build(BuildContext context) {
@@ -202,18 +131,16 @@ class _ProfileTab extends StatelessWidget {
                                 Text(
                                   user.email,
                                   style: const TextStyle(
-                                      color: AppColors.textMuted),
+                                    color: AppColors.textMuted,
+                                  ),
                                 ),
                               ],
                             ),
                           ),
                         ],
                       ),
-                      const Divider(
-                          height: 24, color: AppColors.border),
-                      _Row(
-                          label: AppStrings.phone,
-                          value: user.phone ?? '—'),
+                      const Divider(height: 24, color: AppColors.border),
+                      _Row(label: AppStrings.phone, value: user.phone ?? '—'),
                       _Row(
                         label: AppStrings.userType,
                         value: _userTypeLabel(user.userType),
@@ -231,8 +158,9 @@ class _ProfileTab extends StatelessWidget {
                       if (user.createdAt != null)
                         _Row(
                           label: 'Бүртгүүлсэн',
-                          value: DateFormat('yyyy-MM-dd')
-                              .format(user.createdAt!),
+                          value: DateFormat(
+                            'yyyy-MM-dd',
+                          ).format(user.createdAt!),
                         ),
                     ],
                   ),
@@ -269,8 +197,10 @@ class _Row extends StatelessWidget {
         children: [
           SizedBox(
             width: 110,
-            child: Text(label,
-                style: const TextStyle(color: AppColors.textMuted)),
+            child: Text(
+              label,
+              style: const TextStyle(color: AppColors.textMuted),
+            ),
           ),
           Expanded(
             child: Text(
