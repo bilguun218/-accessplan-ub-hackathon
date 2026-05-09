@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/utils/validators.dart';
+import '../../../map/data/models/place_detail_model.dart';
+import '../../../map/data/models/place_prediction_model.dart';
+import '../../../map/data/services/mock_map_api_service.dart';
+import '../../../map/presentation/screens/map_screen.dart';
 
 const _primaryBlue = Color(0xFF2563EB);
 const _primaryIndigo = Color(0xFF4F46E5);
@@ -47,11 +52,18 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
   final _organizationController = TextEditingController();
   final _customStartLocation = TextEditingController();
 
+  final MockMapApiService _mockMapService = MockMapApiService();
+
   StartLocationType _startLocationType = StartLocationType.current;
   TaskPriority _priority = TaskPriority.medium;
   String _organization = '';
   String _selectedBranch = '';
   String? _branchError;
+
+  List<PlacePredictionModel> _placePredictions = [];
+  bool _isSearchingPlaces = false;
+  PlaceDetailModel? _selectedStartLocation;
+  String? _currentLocationText;
 
   final List<_TaskItem> _tasks = [
     const _TaskItem(
@@ -169,6 +181,84 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       _branchError = null;
     });
     FocusScope.of(context).unfocus();
+  }
+
+  Future<void> _searchPlaces(String query) async {
+    if (query.trim().isEmpty) {
+      setState(() {
+        _placePredictions = [];
+        _isSearchingPlaces = false;
+      });
+      return;
+    }
+
+    setState(() => _isSearchingPlaces = true);
+    try {
+      final predictions = await _mockMapService.autocomplete(query);
+      if (mounted) {
+        setState(() {
+          _placePredictions = predictions;
+          _isSearchingPlaces = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isSearchingPlaces = false);
+      }
+    }
+  }
+
+  Future<void> _selectPlace(PlacePredictionModel prediction) async {
+    try {
+      final detail = await _mockMapService.getPlaceDetails(prediction.placeId);
+      if (mounted) {
+        setState(() {
+          _organizationController.text = detail.name;
+          _organization = detail.name;
+          _selectedBranch = detail.address;
+          _placePredictions = [];
+          _branchError = null;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error getting place details: $e');
+    }
+  }
+
+  Future<void> _getCurrentLocation() async {
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.best,
+          timeLimit: Duration(seconds: 10),
+        ),
+      );
+      if (mounted) {
+        setState(() {
+          _currentLocationText =
+              '${position.latitude.toStringAsFixed(6)}, ${position.longitude.toStringAsFixed(6)}';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Could not get location: $e')));
+      }
+    }
+  }
+
+  Future<void> _openMapPicker() async {
+    final result = await Navigator.push<PlaceDetailModel>(
+      context,
+      MaterialPageRoute(builder: (_) => const MapScreen()),
+    );
+    if (result != null && mounted) {
+      setState(() {
+        _selectedStartLocation = result;
+        _customStartLocation.text = result.address;
+      });
+    }
   }
 
   void _moveTaskUp(int index) {
@@ -373,27 +463,82 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
               subtitle: 'GPS detected location',
               value: StartLocationType.current,
               groupValue: _startLocationType,
-              onChanged: (v) => setState(() => _startLocationType = v),
+              onChanged: (v) {
+                setState(() => _startLocationType = v);
+                if (v == StartLocationType.current) {
+                  _getCurrentLocation();
+                }
+              },
             ),
             const SizedBox(height: 10),
             _StartLocationTile(
               title: 'Choose Location Manually',
-              subtitle: 'Select custom starting point',
+              subtitle: 'Select from map',
               value: StartLocationType.custom,
               groupValue: _startLocationType,
               onChanged: (v) => setState(() => _startLocationType = v),
             ),
-            if (_startLocationType == StartLocationType.custom) ...[
+            if (_startLocationType == StartLocationType.current &&
+                _currentLocationText != null) ...[
               const SizedBox(height: 12),
-              TextFormField(
-                controller: _customStartLocation,
-                decoration: _inputDecoration('Enter custom start location'),
-                textInputAction: TextInputAction.next,
-                validator: (v) => Validators.required(
-                  v,
-                  message: 'Эхлэх байршил шаардлагатай.',
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: _softBlue,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  _currentLocationText!,
+                  style: const TextStyle(fontSize: 12, color: _primaryBlue),
                 ),
               ),
+            ],
+            if (_startLocationType == StartLocationType.custom) ...[
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _openMapPicker,
+                  icon: const Icon(Icons.map_rounded),
+                  label: const Text('Pick Location from Map'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _primaryBlue,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+              if (_selectedStartLocation != null) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: _softBlue,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _selectedStartLocation!.name,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: _primaryBlue,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _selectedStartLocation!.address,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ],
             const SizedBox(height: 20),
             const Text(
@@ -410,19 +555,98 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
             ),
             const SizedBox(height: 18),
             const Text(
-              'Organization Name',
+              'Organization / Place Name',
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 8),
             TextFormField(
               controller: _organizationController,
-              decoration: _inputDecoration('Ex: Khan Bank'),
+              decoration: _inputDecoration('Search for places...'),
               textInputAction: TextInputAction.next,
+              onChanged: _searchPlaces,
               validator: (v) => Validators.required(
                 v,
                 message: 'Байгууллагын нэр шаардлагатай.',
               ),
             ),
+            if (_isSearchingPlaces) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: const SizedBox(
+                  height: 40,
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+              ),
+            ] else if (_placePredictions.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Container(
+                constraints: const BoxConstraints(maxHeight: 300),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.border),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.06),
+                      blurRadius: 16,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _placePredictions.length,
+                  itemBuilder: (context, index) {
+                    final place = _placePredictions[index];
+                    return InkWell(
+                      onTap: () => _selectPlace(place),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                        decoration: BoxDecoration(
+                          border: Border(
+                            bottom: index < _placePredictions.length - 1
+                                ? const BorderSide(color: AppColors.border)
+                                : BorderSide.none,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              place.mainText,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              place.secondaryText,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: AppColors.textMuted,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
             if (hasMatch) ...[
               const SizedBox(height: 18),
               Row(
