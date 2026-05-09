@@ -10,7 +10,9 @@ class RouteSummaryPanel extends StatelessWidget {
     required this.isLoading,
     required this.errorMessage,
     required this.focusedIndex,
+    required this.savedTaskIds,
     required this.onTapSegment,
+    required this.onSaveSegment,
     required this.onDismissFocus,
     required this.onToggleComplete,
   });
@@ -19,33 +21,25 @@ class RouteSummaryPanel extends StatelessWidget {
   final bool isLoading;
   final String? errorMessage;
   final int? focusedIndex;
+  final Set<String> savedTaskIds;
   final ValueChanged<int> onTapSegment;
+  final ValueChanged<RouteSegment> onSaveSegment;
   final VoidCallback onDismissFocus;
   final ValueChanged<int> onToggleComplete;
 
   static const Color _green = Color(0xFF16A34A);
   static const Color _blue = Color(0xFF2563EB);
-  static const Color _gray = Color(0xFF9CA3AF);
+  static const Color _gray = Color(0xFF94A3B8);
+  static const Color _orange = Color(0xFFF59E0B);
 
   Color _statusColor(RouteTaskStatus s) {
     switch (s) {
       case RouteTaskStatus.completed:
         return _green;
       case RouteTaskStatus.current:
-        return _blue;
+        return _orange;
       case RouteTaskStatus.pending:
         return _gray;
-    }
-  }
-
-  String _statusLabel(RouteTaskStatus s) {
-    switch (s) {
-      case RouteTaskStatus.completed:
-        return 'Дууссан';
-      case RouteTaskStatus.current:
-        return 'Идэвхтэй';
-      case RouteTaskStatus.pending:
-        return 'Хүлээгдэж буй';
     }
   }
 
@@ -63,154 +57,136 @@ class RouteSummaryPanel extends StatelessWidget {
       0,
       (sum, s) => sum + s.trafficDelaySeconds,
     );
-    final completedCount =
-        segments.where((s) => s.status == RouteTaskStatus.completed).length;
-
-    final focused = focusedIndex != null &&
+    final completed = segments
+        .where((s) => s.status == RouteTaskStatus.completed)
+        .toList();
+    final activeSegments = segments
+        .where((s) => s.status != RouteTaskStatus.completed)
+        .toList();
+    final visibleSegments =
+        focusedIndex != null &&
             focusedIndex! >= 0 &&
             focusedIndex! < segments.length
-        ? segments[focusedIndex!]
-        : null;
+        ? <RouteSegment>[segments[focusedIndex!]]
+        : activeSegments;
 
     return Material(
       color: Colors.transparent,
       child: Container(
-        margin: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
+        decoration: const BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.18),
-              blurRadius: 22,
-              offset: const Offset(0, 10),
+              color: Color(0x22000000),
+              blurRadius: 28,
+              offset: Offset(0, -8),
             ),
           ],
         ),
         child: SafeArea(
           top: false,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 18),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Center(
+                  child: Container(
+                    width: 44,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFD9DEE7),
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
                 Row(
                   children: [
-                    const Icon(
-                      Icons.route_rounded,
-                      color: AppColors.primary,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 8),
-                    const Expanded(
-                      child: Text(
-                        'Маршрут',
-                        style: TextStyle(
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.textDark,
-                        ),
-                      ),
-                    ),
-                    if (segments.isNotEmpty)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: _green.withValues(alpha: 0.10),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          '$completedCount/${segments.length}',
-                          style: const TextStyle(
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w800,
-                            color: _green,
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Өнөөдрийн маршрут',
+                            style: TextStyle(
+                              color: AppColors.textDark,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w900,
+                            ),
                           ),
-                        ),
+                          const SizedBox(height: 8),
+                          Text(
+                            '${segments.length} ажил · ${((totalDuration + totalDelay) / 60).round()} мин · ${(totalDistance / 1000).toStringAsFixed(1)}',
+                            style: const TextStyle(
+                              color: AppColors.textMuted,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                       ),
-                    if (focused != null)
-                      IconButton(
-                        onPressed: onDismissFocus,
-                        tooltip: 'Хаах',
-                        icon: const Icon(
-                          Icons.close_rounded,
-                          color: AppColors.textMuted,
-                          size: 20,
-                        ),
+                    ),
+                    IconButton(
+                      onPressed: focusedIndex == null ? null : onDismissFocus,
+                      icon: Icon(
+                        focusedIndex == null
+                            ? Icons.keyboard_arrow_up_rounded
+                            : Icons.close_rounded,
+                        color: const Color(0xFF94A3B8),
+                        size: 30,
                       ),
+                    ),
                   ],
                 ),
                 if (isLoading) ...[
-                  const SizedBox(height: 8),
-                  const LinearProgressIndicator(),
+                  const SizedBox(height: 14),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(99),
+                    child: const LinearProgressIndicator(
+                      minHeight: 5,
+                      color: _blue,
+                      backgroundColor: Color(0xFFEFF6FF),
+                    ),
+                  ),
                 ],
                 if (errorMessage != null) ...[
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 12),
                   Text(
                     errorMessage!,
                     style: const TextStyle(
                       color: AppColors.warning,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13,
                     ),
                   ),
                 ],
-                if (focused != null) ...[
-                  const SizedBox(height: 6),
-                  _FocusedTaskCard(
-                    segment: focused,
-                    color: _statusColor(focused.status),
-                    statusLabel: _statusLabel(focused.status),
-                    onToggleComplete: () => onToggleComplete(focused.index),
-                  ),
-                ] else if (segments.isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 4,
-                    children: [
-                      _summaryChip(
-                        Icons.flag_rounded,
-                        '${segments.length} ажил',
-                      ),
-                      _summaryChip(
-                        Icons.straighten_rounded,
-                        '${(totalDistance / 1000).toStringAsFixed(1)} км',
-                      ),
-                      _summaryChip(
-                        Icons.schedule_rounded,
-                        '${((totalDuration + totalDelay) / 60).round()} мин',
-                      ),
-                      if (totalDelay > 0)
-                        _summaryChip(
-                          Icons.traffic_rounded,
-                          '+${(totalDelay / 60).round()} мин түгжрэл',
-                          color: const Color(0xFFD97706),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
+                if (completed.isNotEmpty && focusedIndex == null) ...[
+                  const SizedBox(height: 18),
+                  _CompletedStrip(segment: completed.first),
+                ],
+                if (visibleSegments.isNotEmpty) ...[
+                  const SizedBox(height: 18),
                   ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 240),
+                    constraints: const BoxConstraints(maxHeight: 360),
                     child: ListView.separated(
                       shrinkWrap: true,
                       padding: EdgeInsets.zero,
                       physics: const ClampingScrollPhysics(),
-                      itemCount: segments.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 6),
+                      itemCount: visibleSegments.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 14),
                       itemBuilder: (context, index) {
-                        final s = segments[index];
-                        return _TaskRow(
-                          segment: s,
-                          color: _statusColor(s.status),
-                          statusLabel: _statusLabel(s.status),
-                          onTap: () => onTapSegment(index),
-                          onToggleComplete: () => onToggleComplete(index),
+                        final segment = visibleSegments[index];
+                        return _RouteTaskCard(
+                          segment: segment,
+                          color: _statusColor(segment.status),
+                          saved: savedTaskIds.contains(segment.taskId),
+                          onTap: () => onTapSegment(segment.index),
+                          onSave: () => onSaveSegment(segment),
+                          onToggleComplete: () =>
+                              onToggleComplete(segment.index),
                         );
                       },
                     ),
@@ -223,444 +199,280 @@ class RouteSummaryPanel extends StatelessWidget {
       ),
     );
   }
+}
 
-  Widget _summaryChip(IconData icon, String text, {Color? color}) {
-    final c = color ?? AppColors.textMuted;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 13, color: c),
-        const SizedBox(width: 4),
-        Text(
-          text,
-          style: TextStyle(
-            fontSize: 12,
-            color: c,
-            fontWeight: FontWeight.w700,
+class _CompletedStrip extends StatelessWidget {
+  final RouteSegment segment;
+
+  const _CompletedStrip({required this.segment});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 58,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.border),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
-        ),
-      ],
+        ],
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.check_circle_outline_rounded,
+            color: Color(0xFF5BD98D),
+            size: 25,
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Text(
+              segment.toLabel,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFF9AA3B2),
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const Text(
+            'Дууссан',
+            style: TextStyle(
+              color: Color(0xFFB8C0CC),
+              fontSize: 17,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
-class _TaskRow extends StatelessWidget {
-  const _TaskRow({
+class _RouteTaskCard extends StatelessWidget {
+  final RouteSegment segment;
+  final Color color;
+  final bool saved;
+  final VoidCallback onTap;
+  final VoidCallback onSave;
+  final VoidCallback onToggleComplete;
+
+  const _RouteTaskCard({
     required this.segment,
     required this.color,
-    required this.statusLabel,
+    required this.saved,
     required this.onTap,
+    required this.onSave,
     required this.onToggleComplete,
   });
 
-  final RouteSegment segment;
-  final Color color;
-  final String statusLabel;
-  final VoidCallback onTap;
-  final VoidCallback onToggleComplete;
+  IconData _categoryIcon(String category) {
+    final lower = category.toLowerCase();
+    if (lower.contains('баримт') || lower.contains('document')) {
+      return Icons.description_outlined;
+    }
+    if (lower.contains('хүнс') || lower.contains('shop')) {
+      return Icons.shopping_cart_outlined;
+    }
+    if (lower.contains('эм') || lower.contains('pharmacy')) {
+      return Icons.medication_outlined;
+    }
+    return Icons.place_outlined;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final isCompleted = segment.status == RouteTaskStatus.completed;
-    final isCurrent = segment.status == RouteTaskStatus.current;
+    final title = segment.toLabel;
+    final address = segment.toAddress.isNotEmpty
+        ? segment.toAddress
+        : segment.toCategory;
 
-    final bg = isCompleted
-        ? color.withValues(alpha: 0.12)
-        : isCurrent
-            ? color.withValues(alpha: 0.10)
-            : Colors.white;
-    final borderColor = isCurrent
-        ? color
-        : isCompleted
-            ? color.withValues(alpha: 0.45)
-            : Colors.black.withValues(alpha: 0.06);
-
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-          decoration: BoxDecoration(
-            color: bg,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: borderColor,
-              width: isCurrent ? 1.6 : 1,
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: AppColors.border),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 12,
+              offset: const Offset(0, 5),
             ),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 30,
-                height: 30,
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(10),
-                  boxShadow: isCurrent
-                      ? [
-                          BoxShadow(
-                            color: color.withValues(alpha: 0.45),
-                            blurRadius: 10,
-                            offset: const Offset(0, 3),
-                          ),
-                        ]
-                      : null,
-                ),
+          ],
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Container(
+                width: 26,
+                height: 26,
                 alignment: Alignment.center,
-                child: isCompleted
-                    ? const Icon(
-                        Icons.check_rounded,
-                        color: Colors.white,
-                        size: 18,
-                      )
-                    : Text(
-                        '${segment.taskOrder}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                child: Text(
+                  '${segment.taskOrder}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 14,
+                  ),
+                ),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            segment.toLabel,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 13.5,
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.textDark,
-                              decoration: isCompleted
-                                  ? TextDecoration.lineThrough
-                                  : null,
-                              decorationColor:
-                                  AppColors.textMuted.withValues(alpha: 0.6),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        _StatusBadge(label: statusLabel, color: color),
-                      ],
-                    ),
-                    if (segment.toAddress.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2),
+            ),
+            const SizedBox(width: 14),
+            Container(
+              width: 54,
+              height: 54,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF1F3F6),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: Icon(
+                _categoryIcon(segment.toCategory),
+                color: AppColors.textDark.withValues(alpha: 0.72),
+                size: 30,
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
                         child: Text(
-                          segment.toAddress,
+                          title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                            fontSize: 11.5,
-                            color: AppColors.textMuted,
-                            fontWeight: FontWeight.w500,
+                            color: AppColors.textDark,
+                            fontSize: 19,
+                            fontWeight: FontWeight.w900,
                           ),
                         ),
                       ),
-                    Padding(
-                      padding: const EdgeInsets.only(top: 6),
-                      child: Wrap(
-                        spacing: 10,
-                        runSpacing: 4,
-                        children: [
-                          _metric(
-                            Icons.straighten_rounded,
-                            '${segment.distanceKm.toStringAsFixed(1)} км',
+                      const SizedBox(width: 8),
+                      InkWell(
+                        onTap: onSave,
+                        borderRadius: BorderRadius.circular(14),
+                        child: Padding(
+                          padding: const EdgeInsets.all(3),
+                          child: Icon(
+                            saved
+                                ? Icons.bookmark_rounded
+                                : Icons.bookmark_border_rounded,
+                            color: saved
+                                ? AppColors.primary
+                                : const Color(0xFFD1D7E1),
+                            size: 25,
                           ),
-                          _metric(
-                            Icons.schedule_rounded,
-                            '${segment.durationMinutes} мин',
-                          ),
-                          if (segment.trafficDelaySeconds > 0)
-                            _metric(
-                              Icons.traffic_rounded,
-                              '+${segment.trafficDelayMinutes} мин',
-                              color: const Color(0xFFD97706),
-                            ),
-                        ],
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 6),
-              IconButton(
-                onPressed: onToggleComplete,
-                visualDensity: VisualDensity.compact,
-                tooltip:
-                    isCompleted ? 'Дуусаагүй болгох' : 'Дууссан гэж тэмдэглэх',
-                icon: Icon(
-                  isCompleted
-                      ? Icons.check_circle_rounded
-                      : Icons.radio_button_unchecked_rounded,
-                  color: isCompleted ? color : AppColors.textMuted,
-                  size: 22,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _metric(IconData icon, String text, {Color? color}) {
-    final c = color ?? AppColors.textMuted;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 12, color: c),
-        const SizedBox(width: 3),
-        Text(
-          text,
-          style: TextStyle(
-            fontSize: 11.5,
-            color: c,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.label, required this.color});
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 10.5,
-          fontWeight: FontWeight.w800,
-          color: color,
-        ),
-      ),
-    );
-  }
-}
-
-class _FocusedTaskCard extends StatelessWidget {
-  const _FocusedTaskCard({
-    required this.segment,
-    required this.color,
-    required this.statusLabel,
-    required this.onToggleComplete,
-  });
-  final RouteSegment segment;
-  final Color color;
-  final String statusLabel;
-  final VoidCallback onToggleComplete;
-
-  @override
-  Widget build(BuildContext context) {
-    final isCompleted = segment.status == RouteTaskStatus.completed;
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: color.withValues(alpha: 0.4)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                alignment: Alignment.center,
-                child: isCompleted
-                    ? const Icon(
-                        Icons.check_rounded,
-                        color: Colors.white,
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.location_on_outlined,
+                        color: AppColors.textMuted,
                         size: 18,
-                      )
-                    : Text(
-                        '${segment.taskOrder}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w800,
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          address,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppColors.textMuted,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  segment.toLabel,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 14.5,
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.textDark,
-                    decoration:
-                        isCompleted ? TextDecoration.lineThrough : null,
+                    ],
                   ),
-                ),
-              ),
-              const SizedBox(width: 6),
-              _StatusBadge(label: statusLabel, color: color),
-            ],
-          ),
-          if (segment.toAddress.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(
-                  Icons.place_rounded,
-                  size: 14,
-                  color: AppColors.textMuted,
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    segment.toAddress,
-                    style: const TextStyle(
-                      fontSize: 12.5,
-                      color: AppColors.textDark,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-          if (segment.toCategory.isNotEmpty || segment.toTimeText.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 6,
-              runSpacing: 4,
-              children: [
-                if (segment.toCategory.isNotEmpty)
-                  _chip(Icons.category_rounded, segment.toCategory),
-                if (segment.toTimeText.isNotEmpty)
-                  _chip(Icons.schedule_rounded, segment.toTimeText),
-              ],
-            ),
-          ],
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              const Icon(Icons.straighten_rounded,
-                  size: 14, color: AppColors.textMuted),
-              const SizedBox(width: 4),
-              Text(
-                '${segment.distanceKm.toStringAsFixed(2)} км',
-                style: const TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textDark,
-                ),
-              ),
-              const SizedBox(width: 14),
-              const Icon(Icons.schedule_rounded,
-                  size: 14, color: AppColors.textMuted),
-              const SizedBox(width: 4),
-              Text(
-                '${segment.durationMinutes} мин',
-                style: const TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textDark,
-                ),
-              ),
-              if (segment.trafficDelaySeconds > 0) ...[
-                const SizedBox(width: 14),
-                const Icon(Icons.traffic_rounded,
-                    size: 14, color: Color(0xFFD97706)),
-                const SizedBox(width: 4),
-                Text(
-                  '+${segment.trafficDelayMinutes} мин',
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFFD97706),
-                  ),
-                ),
-              ],
-            ],
-          ),
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: onToggleComplete,
-              icon: Icon(
-                isCompleted
-                    ? Icons.refresh_rounded
-                    : Icons.check_circle_rounded,
-                size: 18,
-              ),
-              label: Text(
-                isCompleted ? 'Дуусаагүй болгох' : 'Дууссан гэж тэмдэглэх',
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: color,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                textStyle: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+                  const SizedBox(height: 14),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final narrow = constraints.maxWidth < 230;
+                      final metric = Text(
+                        '${segment.distanceKm.toStringAsFixed(1)} км · ${segment.durationMinutes} мин',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF9AA3B2),
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      );
+                      final action = SizedBox(
+                        height: 40,
+                        child: OutlinedButton(
+                          onPressed: onToggleComplete,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.textDark,
+                            side: const BorderSide(color: AppColors.border),
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(18),
+                            ),
+                            textStyle: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          child: Text(
+                            segment.status == RouteTaskStatus.completed
+                                ? 'Буцаах'
+                                : 'Дуусгах',
+                          ),
+                        ),
+                      );
 
-  Widget _chip(IconData icon, String text) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: AppColors.textMuted),
-          const SizedBox(width: 4),
-          Text(
-            text,
-            style: const TextStyle(
-              fontSize: 11.5,
-              color: AppColors.textMuted,
-              fontWeight: FontWeight.w600,
+                      if (narrow) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            metric,
+                            const SizedBox(height: 10),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: action,
+                            ),
+                          ],
+                        );
+                      }
+
+                      return Row(
+                        children: [
+                          Expanded(child: metric),
+                          const SizedBox(width: 8),
+                          action,
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

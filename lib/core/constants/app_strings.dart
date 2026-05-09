@@ -27,7 +27,7 @@ class AppStrings {
   static const welcomePrefix = 'Тавтай морил, ';
 
   // Errors
-  static const errNetwork = 'Интернэт холболтоо шалгана уу.';
+  static const errNetwork = 'Интернет холболтоо шалгана уу.';
   static const errInvalidCredentials = 'Имэйл эсвэл нууц үг буруу байна.';
   static const errEmailExists = 'Энэ имэйлээр бүртгэл үүссэн байна.';
   static const errSession = 'Таны session дууссан байна. Дахин нэвтэрнэ үү.';

@@ -17,9 +17,21 @@ import '../../data/services/segment_route_service.dart';
 import '_route_summary_panel.dart';
 
 class MapScreen extends StatefulWidget {
-  const MapScreen({super.key, this.tasks = const <StandardTask>[]});
+  const MapScreen({
+    super.key,
+    this.tasks = const <StandardTask>[],
+    this.savedTaskIds = const <String>{},
+    this.completedTaskIds = const <String>{},
+    this.onSaveTask,
+    this.onTaskCompletionChanged,
+  });
 
   final List<StandardTask> tasks;
+  final Set<String> savedTaskIds;
+  final Set<String> completedTaskIds;
+  final ValueChanged<StandardTask>? onSaveTask;
+  final void Function(StandardTask task, bool completed)?
+  onTaskCompletionChanged;
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -72,7 +84,8 @@ class _MapScreenState extends State<MapScreen> {
   String? _routeErrorMessage;
   int? _focusedSegmentIndex;
   LatLng? _currentLatLng;
-  final Set<String> _completedTaskIds = <String>{};
+  late Set<String> _savedTaskIds;
+  late Set<String> _completedTaskIds;
   List<StandardTask> _routableTasks = <StandardTask>[];
 
   late CameraPosition _initialCameraPosition;
@@ -81,6 +94,8 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void initState() {
     super.initState();
+    _savedTaskIds = Set<String>.of(widget.savedTaskIds);
+    _completedTaskIds = Set<String>.of(widget.completedTaskIds);
     // Initialize with a default location, will be updated when actual location loads
     _initialCameraPosition = const CameraPosition(
       target: LatLng(47.918873, 106.917701),
@@ -88,6 +103,18 @@ class _MapScreenState extends State<MapScreen> {
     );
     _prepareLocationIcons();
     _initLocation();
+  }
+
+  @override
+  void didUpdateWidget(covariant MapScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.savedTaskIds != widget.savedTaskIds) {
+      _savedTaskIds = Set<String>.of(widget.savedTaskIds);
+    }
+    if (oldWidget.completedTaskIds != widget.completedTaskIds) {
+      _completedTaskIds = Set<String>.of(widget.completedTaskIds);
+      _refreshStatuses();
+    }
   }
 
   @override
@@ -107,7 +134,7 @@ class _MapScreenState extends State<MapScreen> {
     setState(() {
       _startPointIcon = start;
       _liveLocationIcon = live;
-      if (_currentLatLng != null && _liveLocationMarker == null) {
+      if (_currentLatLng != null) {
         _liveLocationMarker = _makeLiveLocationMarker(_currentLatLng!);
       }
     });
@@ -133,10 +160,7 @@ class _MapScreenState extends State<MapScreen> {
     final picture = recorder.endRecording();
     final image = await picture.toImage(size.toInt(), size.toInt());
     final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-    return BitmapDescriptor.bytes(
-      bytes!.buffer.asUint8List(),
-      width: 26,
-    );
+    return BitmapDescriptor.bytes(bytes!.buffer.asUint8List(), width: 26);
   }
 
   Future<BitmapDescriptor> _buildLiveLocationBitmap() async {
@@ -181,10 +205,7 @@ class _MapScreenState extends State<MapScreen> {
     final picture = recorder.endRecording();
     final image = await picture.toImage(size.toInt(), size.toInt());
     final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-    return BitmapDescriptor.bytes(
-      bytes!.buffer.asUint8List(),
-      width: 44,
-    );
+    return BitmapDescriptor.bytes(bytes!.buffer.asUint8List(), width: 44);
   }
 
   Marker _makeLiveLocationMarker(LatLng pos) {
@@ -217,21 +238,21 @@ class _MapScreenState extends State<MapScreen> {
 
   void _startLocationStream() {
     _positionSub?.cancel();
-    _positionSub = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.best,
-        distanceFilter: 4,
-      ),
-    ).listen((pos) {
-      if (!mounted) return;
-      final ll = LatLng(pos.latitude, pos.longitude);
-      setState(() {
-        _currentLatLng = ll;
-        _liveLocationMarker = _makeLiveLocationMarker(ll);
-      });
-    });
+    _positionSub =
+        Geolocator.getPositionStream(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.best,
+            distanceFilter: 4,
+          ),
+        ).listen((pos) {
+          if (!mounted) return;
+          final ll = LatLng(pos.latitude, pos.longitude);
+          setState(() {
+            _currentLatLng = ll;
+            _liveLocationMarker = _makeLiveLocationMarker(ll);
+          });
+        });
   }
-
 
   Future<void> _initLocation() async {
     try {
@@ -300,9 +321,7 @@ class _MapScreenState extends State<MapScreen> {
 
       await _animateTo(currentLatLng, zoom: 16);
 
-      if (widget.tasks.isNotEmpty &&
-          _segments.isEmpty &&
-          !_isBuildingRoute) {
+      if (widget.tasks.isNotEmpty && _segments.isEmpty && !_isBuildingRoute) {
         unawaited(_buildRouteForTasks());
       }
     } catch (e) {
@@ -347,9 +366,7 @@ class _MapScreenState extends State<MapScreen> {
       }
       final query = t.needsPlaceSearch && t.placeSearchQuery.isNotEmpty
           ? t.placeSearchQuery
-          : (t.locationText.isNotEmpty
-              ? t.locationText
-              : t.placeSearchQuery);
+          : (t.locationText.isNotEmpty ? t.locationText : t.placeSearchQuery);
       if (query.isEmpty) {
         resolved.add(t);
         continue;
@@ -410,8 +427,8 @@ class _MapScreenState extends State<MapScreen> {
       final status = _completedTaskIds.contains(t.id)
           ? RouteTaskStatus.completed
           : (i == firstPendingIdx
-              ? RouteTaskStatus.current
-              : RouteTaskStatus.pending);
+                ? RouteTaskStatus.current
+                : RouteTaskStatus.pending);
 
       segments.add(
         RouteSegment(
@@ -479,8 +496,8 @@ class _MapScreenState extends State<MapScreen> {
       final status = _completedTaskIds.contains(t.id)
           ? RouteTaskStatus.completed
           : (i == currentIdx
-              ? RouteTaskStatus.current
-              : RouteTaskStatus.pending);
+                ? RouteTaskStatus.current
+                : RouteTaskStatus.pending);
       final icon = await _taskMarkerBitmap(t.order, status);
       markers.add(
         Marker(
@@ -500,7 +517,7 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   static const Color _statusGreen = Color(0xFF16A34A);
-  static const Color _statusBlue = Color(0xFF2563EB);
+  static const Color _statusBlue = Color(0xFFF59E0B);
   static const Color _statusGray = Color(0xFF9CA3AF);
 
   Color _statusColor(RouteTaskStatus status) {
@@ -523,7 +540,7 @@ class _MapScreenState extends State<MapScreen> {
     final canvas = Canvas(recorder);
 
     final fill = _statusColor(status);
-    final center = const Offset(size / 2, size / 2 - 4);
+    final center = const Offset(size / 2, size / 2);
     final radius = size / 2 - 12;
 
     // Soft shadow
@@ -536,11 +553,7 @@ class _MapScreenState extends State<MapScreen> {
     );
 
     // White ring
-    canvas.drawCircle(
-      center,
-      radius + 3,
-      Paint()..color = Colors.white,
-    );
+    canvas.drawCircle(center, radius + 3, Paint()..color = Colors.white);
 
     // Filled status circle
     canvas.drawCircle(center, radius, Paint()..color = fill);
@@ -556,14 +569,6 @@ class _MapScreenState extends State<MapScreen> {
           ..strokeWidth = 4,
       );
     }
-
-    // Pin tail
-    final tailPath = Path()
-      ..moveTo(center.dx - 8, center.dy + radius - 1)
-      ..lineTo(center.dx + 8, center.dy + radius - 1)
-      ..lineTo(center.dx, center.dy + radius + 12)
-      ..close();
-    canvas.drawPath(tailPath, Paint()..color = fill);
 
     // Number or check
     if (status == RouteTaskStatus.completed) {
@@ -599,10 +604,7 @@ class _MapScreenState extends State<MapScreen> {
     final picture = recorder.endRecording();
     final image = await picture.toImage(size.toInt(), size.toInt());
     final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-    return BitmapDescriptor.bytes(
-      bytes!.buffer.asUint8List(),
-      width: 44,
-    );
+    return BitmapDescriptor.bytes(bytes!.buffer.asUint8List(), width: 44);
   }
 
   int _trafficDelaySeconds(int durationSeconds) {
@@ -616,14 +618,42 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _toggleTaskCompletion(int segmentIndex) async {
     if (segmentIndex < 0 || segmentIndex >= _segments.length) return;
     final seg = _segments[segmentIndex];
+    final completed = !_completedTaskIds.contains(seg.taskId);
     setState(() {
-      if (_completedTaskIds.contains(seg.taskId)) {
-        _completedTaskIds.remove(seg.taskId);
-      } else {
+      if (completed) {
         _completedTaskIds.add(seg.taskId);
+      } else {
+        _completedTaskIds.remove(seg.taskId);
       }
     });
+    final task = _taskForSegment(seg);
+    if (task != null) {
+      widget.onTaskCompletionChanged?.call(task, completed);
+    }
     await _refreshStatuses();
+  }
+
+  StandardTask? _taskForSegment(RouteSegment segment) {
+    for (final task in _routableTasks) {
+      if (task.id == segment.taskId) return task;
+    }
+    for (final task in widget.tasks) {
+      if (task.id == segment.taskId) return task;
+    }
+    return null;
+  }
+
+  void _saveSegmentTask(RouteSegment segment) {
+    final task = _taskForSegment(segment);
+    if (task == null) return;
+    setState(() => _savedTaskIds.add(task.id));
+    widget.onSaveTask?.call(task);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('${task.title} хадгаллаа'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   Future<void> _refreshStatuses() async {
@@ -638,8 +668,8 @@ class _MapScreenState extends State<MapScreen> {
       final status = _completedTaskIds.contains(s.taskId)
           ? RouteTaskStatus.completed
           : (i == firstPendingIdx
-              ? RouteTaskStatus.current
-              : RouteTaskStatus.pending);
+                ? RouteTaskStatus.current
+                : RouteTaskStatus.pending);
       updatedSegments.add(s.copyWith(status: status));
     }
 
@@ -733,9 +763,7 @@ class _MapScreenState extends State<MapScreen> {
       southwest: LatLng(minLat, minLng),
       northeast: LatLng(maxLat, maxLng),
     );
-    await controller.animateCamera(
-      CameraUpdate.newLatLngBounds(bounds, 100),
-    );
+    await controller.animateCamera(CameraUpdate.newLatLngBounds(bounds, 100));
   }
 
   void _setPermissionMessage(String msg) {
@@ -803,7 +831,7 @@ class _MapScreenState extends State<MapScreen> {
                 ),
                 const SizedBox(height: 14),
                 const Text(
-                  'Map Type',
+                  'Зургийн төрөл',
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w800,
@@ -812,8 +840,8 @@ class _MapScreenState extends State<MapScreen> {
                 ),
                 const SizedBox(height: 12),
                 _MapTypeOption(
-                  title: 'Normal',
-                  subtitle: 'Standard map',
+                  title: 'Энгийн',
+                  subtitle: 'Стандарт газрын зураг',
                   icon: Icons.map_rounded,
                   isSelected: _mapType == MapType.normal,
                   onTap: () {
@@ -822,8 +850,8 @@ class _MapScreenState extends State<MapScreen> {
                   },
                 ),
                 _MapTypeOption(
-                  title: 'Satellite',
-                  subtitle: 'Satellite imagery',
+                  title: 'Сансрын зураг',
+                  subtitle: 'Дэлгэрэнгүй дүрслэл',
                   icon: Icons.satellite_alt_rounded,
                   isSelected: _mapType == MapType.satellite,
                   onTap: () {
@@ -832,8 +860,8 @@ class _MapScreenState extends State<MapScreen> {
                   },
                 ),
                 _MapTypeOption(
-                  title: 'Hybrid',
-                  subtitle: 'Satellite + labels',
+                  title: 'Хосолсон',
+                  subtitle: 'Зураг болон тэмдэглэгээ',
                   icon: Icons.layers_rounded,
                   isSelected: _mapType == MapType.hybrid,
                   onTap: () {
@@ -842,8 +870,8 @@ class _MapScreenState extends State<MapScreen> {
                   },
                 ),
                 _MapTypeOption(
-                  title: 'Terrain',
-                  subtitle: 'Terrain map',
+                  title: 'Газрын гадарга',
+                  subtitle: 'Өндөршил, газрын хэлбэр',
                   icon: Icons.terrain_rounded,
                   isSelected: _mapType == MapType.terrain,
                   onTap: () {
@@ -904,7 +932,7 @@ class _MapScreenState extends State<MapScreen> {
       setState(() {
         _suggestions = [];
         _isSearching = false;
-        _errorMessage = 'Search failed.';
+        _errorMessage = 'Хайлт амжилтгүй боллоо.';
       });
     }
   }
@@ -961,7 +989,7 @@ class _MapScreenState extends State<MapScreen> {
 
       setState(() {
         _isLoadingPlace = false;
-        _errorMessage = 'Failed to load place.';
+        _errorMessage = 'Газрын мэдээлэл ачаалж чадсангүй.';
       });
     }
   }
@@ -993,8 +1021,8 @@ class _MapScreenState extends State<MapScreen> {
             zoomControlsEnabled: false,
             compassEnabled: true,
             padding: EdgeInsets.only(
-              top: viewPadding.top + 70,
-              bottom: _segments.isEmpty ? 24 : 240,
+              top: viewPadding.top + 94,
+              bottom: _segments.isEmpty ? 24 : 430,
             ),
             onTap: (_) => FocusScope.of(context).unfocus(),
             onMapCreated: (controller) {
@@ -1007,7 +1035,7 @@ class _MapScreenState extends State<MapScreen> {
           ),
 
           Positioned(
-            top: viewPadding.top + 8,
+            top: viewPadding.top + 24,
             left: 16,
             right: 16,
             child: Column(
@@ -1036,7 +1064,7 @@ class _MapScreenState extends State<MapScreen> {
           ),
 
           Positioned(
-            top: viewPadding.top + 82,
+            top: viewPadding.top + 104,
             right: 16,
             child: Column(
               children: [
@@ -1044,7 +1072,7 @@ class _MapScreenState extends State<MapScreen> {
                   icon: _trafficEnabled
                       ? Icons.traffic_rounded
                       : Icons.traffic_outlined,
-                  tooltip: 'Traffic',
+                  tooltip: 'Түгжрэл',
                   isActive: _trafficEnabled,
                   onTap: _toggleTraffic,
                 ),
@@ -1053,7 +1081,7 @@ class _MapScreenState extends State<MapScreen> {
 
                 _MapFloatingButton(
                   icon: Icons.my_location_rounded,
-                  tooltip: 'Current Location',
+                  tooltip: 'Одоогийн байршил',
                   isActive: false,
                   onTap: _goToCurrentLocation,
                 ),
@@ -1062,7 +1090,7 @@ class _MapScreenState extends State<MapScreen> {
 
                 _MapFloatingButton(
                   icon: Icons.layers_rounded,
-                  tooltip: 'Map Type',
+                  tooltip: 'Зургийн төрөл',
                   isActive: _mapType != MapType.normal,
                   onTap: _showMapTypeSheet,
                 ),
@@ -1074,7 +1102,7 @@ class _MapScreenState extends State<MapScreen> {
                     icon: _isBuildingRoute
                         ? Icons.hourglass_top_rounded
                         : Icons.alt_route_rounded,
-                    tooltip: 'Rebuild route',
+                    tooltip: 'Маршрут шинэчлэх',
                     isActive: _segments.isNotEmpty,
                     onTap: _isBuildingRoute ? () {} : _buildRouteForTasks,
                   ),
@@ -1092,7 +1120,9 @@ class _MapScreenState extends State<MapScreen> {
                 isLoading: _isBuildingRoute,
                 errorMessage: _routeErrorMessage,
                 focusedIndex: _focusedSegmentIndex,
+                savedTaskIds: _savedTaskIds,
                 onTapSegment: _onSegmentTap,
+                onSaveSegment: _saveSegmentTask,
                 onToggleComplete: _toggleTaskCompletion,
                 onDismissFocus: () =>
                     setState(() => _focusedSegmentIndex = null),
@@ -1167,7 +1197,7 @@ class _MapScreenState extends State<MapScreen> {
                     ),
                   ),
                   child: const Text(
-                    'Confirm Location',
+                    'Байршил сонгох',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 16,
@@ -1299,68 +1329,90 @@ class _MapSearchInput extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: Container(
+        height: 72,
+        padding: const EdgeInsets.fromLTRB(18, 8, 10, 8),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.88)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.12),
-              blurRadius: 18,
-              offset: const Offset(0, 8),
+              color: Colors.black.withValues(alpha: 0.16),
+              blurRadius: 22,
+              offset: const Offset(0, 10),
             ),
           ],
         ),
-        child: TextField(
-          controller: controller,
-          focusNode: focusNode,
-          onChanged: onChanged,
-          textInputAction: TextInputAction.search,
-          style: const TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: AppColors.textDark,
-          ),
-          decoration: InputDecoration(
-            hintText: 'Search places...',
-            hintStyle: const TextStyle(
-              color: AppColors.textMuted,
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-            ),
-            prefixIcon: const Icon(
+        child: Row(
+          children: [
+            const Icon(
               Icons.search_rounded,
-              color: AppColors.textMuted,
-              size: 22,
+              color: Color(0xFF9AA3B2),
+              size: 30,
             ),
-            suffixIcon: isLoading
-                ? const Padding(
-                    padding: EdgeInsets.all(14),
-                    child: SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: AppColors.primary,
-                      ),
-                    ),
-                  )
-                : controller.text.isNotEmpty
-                ? IconButton(
-                    icon: const Icon(
-                      Icons.close_rounded,
-                      color: AppColors.textMuted,
-                    ),
-                    onPressed: onClear,
-                    tooltip: 'Clear',
-                  )
-                : null,
-            border: InputBorder.none,
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 14,
+            const SizedBox(width: 10),
+            Expanded(
+              child: TextField(
+                controller: controller,
+                focusNode: focusNode,
+                onChanged: onChanged,
+                textInputAction: TextInputAction.search,
+                style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textDark,
+                ),
+                decoration: const InputDecoration(
+                  hintText: 'Газар эсвэл ажил хайх...',
+                  hintStyle: TextStyle(
+                    color: Color(0xFF9AA3B2),
+                    fontSize: 17,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  border: InputBorder.none,
+                  isDense: true,
+                ),
+              ),
             ),
-          ),
+            if (isLoading)
+              const Padding(
+                padding: EdgeInsets.all(13),
+                child: SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    color: AppColors.primary,
+                  ),
+                ),
+              )
+            else if (controller.text.isNotEmpty)
+              IconButton(
+                icon: const Icon(
+                  Icons.close_rounded,
+                  color: AppColors.textMuted,
+                ),
+                onPressed: onClear,
+                tooltip: 'Арилгах',
+              )
+            else
+              GestureDetector(
+                onTap: focusNode.requestFocus,
+                child: Container(
+                  width: 54,
+                  height: 54,
+                  decoration: const BoxDecoration(
+                    color: AppColors.primary,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.add_rounded,
+                    color: Colors.white,
+                    size: 34,
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -1383,17 +1435,17 @@ class _SuggestionPanel extends StatelessWidget {
   });
 
   BoxDecoration _panelDecoration() => BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.12),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      );
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(18),
+    border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+    boxShadow: [
+      BoxShadow(
+        color: Colors.black.withValues(alpha: 0.12),
+        blurRadius: 18,
+        offset: const Offset(0, 8),
+      ),
+    ],
+  );
 
   Widget _infoRow({
     required IconData icon,
@@ -1431,10 +1483,7 @@ class _SuggestionPanel extends StatelessWidget {
         color: Colors.transparent,
         child: Container(
           decoration: _panelDecoration(),
-          child: _infoRow(
-            icon: Icons.search_rounded,
-            text: 'Searching...',
-          ),
+          child: _infoRow(icon: Icons.search_rounded, text: 'Хайж байна...'),
         ),
       );
     }
@@ -1460,7 +1509,7 @@ class _SuggestionPanel extends StatelessWidget {
           decoration: _panelDecoration(),
           child: _infoRow(
             icon: Icons.location_off_rounded,
-            text: 'No results found',
+            text: 'Илэрц олдсонгүй',
           ),
         ),
       );
@@ -1606,4 +1655,3 @@ class _MapFloatingButton extends StatelessWidget {
     );
   }
 }
-
