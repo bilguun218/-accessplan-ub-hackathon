@@ -64,3 +64,6 @@ Thumbs.db
 
 # Local tooling
 .claude/
+linux/flutter/generated_plugin_registrant.cc
+linux/flutter/generated_plugin_registrant.cc
+macos/Flutter/GeneratedPluginRegistrant.swift
