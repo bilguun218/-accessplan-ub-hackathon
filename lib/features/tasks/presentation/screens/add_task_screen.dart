@@ -6,6 +6,8 @@ import '../../../map/data/models/place_detail_model.dart';
 import '../../../map/data/models/place_prediction_model.dart';
 import '../../../map/data/services/mock_map_api_service.dart';
 import '../../../map/presentation/screens/map_screen.dart';
+import '../../../tasks/data/models/extracted_task_model.dart';
+import '../../../tasks/data/services/task_nlp_service.dart';
 
 const _primaryBlue = Color(0xFF2563EB);
 const _primaryIndigo = Color(0xFF4F46E5);
@@ -15,6 +17,8 @@ const _slateSurface = Color(0xFFF8FAFC);
 enum StartLocationType { current, custom }
 
 enum TaskPriority { high, medium, low }
+
+enum InputMode { structured, ai }
 
 class AddTaskScreen extends StatefulWidget {
   const AddTaskScreen({super.key});
@@ -51,9 +55,12 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
   final _taskName = TextEditingController();
   final _organizationController = TextEditingController();
   final _customStartLocation = TextEditingController();
+  final _aiInputController = TextEditingController();
 
   final MockMapApiService _mockMapService = MockMapApiService();
+  final TaskNlpService _nlpService = TaskNlpService();
 
+  InputMode _inputMode = InputMode.structured;
   StartLocationType _startLocationType = StartLocationType.current;
   TaskPriority _priority = TaskPriority.medium;
   String _organization = '';
@@ -64,6 +71,10 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
   bool _isSearchingPlaces = false;
   PlaceDetailModel? _selectedStartLocation;
   String? _currentLocationText;
+
+  ExtractedTaskModel? _extractedTask;
+  bool _isExtracting = false;
+  String? _extractionError;
 
   final List<_TaskItem> _tasks = [];
 
@@ -91,6 +102,8 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     _taskName.dispose();
     _organizationController.dispose();
     _customStartLocation.dispose();
+    _aiInputController.dispose();
+    _nlpService.dispose();
     super.dispose();
   }
 
@@ -259,6 +272,85 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     setState(() {
       final item = _tasks.removeAt(index);
       _tasks.insert(index + 1, item);
+    });
+  }
+
+  /// Extract task entities from AI input using NLP
+  Future<void> _extractTaskFromAI() async {
+    final input = _aiInputController.text.trim();
+    if (input.isEmpty) {
+      setState(() {
+        _extractionError = 'Please enter task description';
+      });
+      return;
+    }
+
+    setState(() {
+      _isExtracting = true;
+      _extractionError = null;
+    });
+
+    try {
+      final extracted = await _nlpService.extractTaskEntities(input);
+      if (mounted) {
+        setState(() {
+          _extractedTask = extracted;
+          _isExtracting = false;
+          if (!extracted.isValid) {
+            _extractionError =
+                'Could not extract sufficient information. Please provide task name and organization.';
+          }
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isExtracting = false;
+          _extractionError = 'Error processing input: $e';
+        });
+      }
+    }
+  }
+
+  /// Apply extracted task data to form fields
+  void _applyExtractedTask(ExtractedTaskModel extracted) {
+    if (extracted.taskName != null) {
+      _taskName.text = extracted.taskName!;
+    }
+    if (extracted.organization != null) {
+      _organizationController.text = extracted.organization!;
+      setState(() {
+        _organization = extracted.organization!;
+      });
+    }
+    if (extracted.branch != null) {
+      setState(() {
+        _selectedBranch = extracted.branch!;
+      });
+    }
+    if (extracted.priority != null) {
+      setState(() {
+        _priority = extracted.priority!;
+      });
+    }
+
+    // Reset extracted data and switch back to structured mode
+    setState(() {
+      _extractedTask = null;
+      _aiInputController.clear();
+      _inputMode = InputMode.structured;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Task information extracted and applied!')),
+    );
+  }
+
+  /// Reject extracted data and clear
+  void _rejectExtractedTask() {
+    setState(() {
+      _extractedTask = null;
+      _extractionError = null;
     });
   }
 
@@ -443,55 +535,656 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                 ),
               ],
             ),
+            const SizedBox(height: 20),
+            // Input mode tabs
+            _buildInputModeTabs(),
             const SizedBox(height: 22),
-            const Text(
-              'Starting Location',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+            // Conditional rendering based on input mode
+            if (_inputMode == InputMode.structured)
+              _buildStructuredInputForm()
+            else
+              _buildAIInputForm(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Build mode selection tabs
+  Widget _buildInputModeTabs() {
+    return Container(
+      decoration: BoxDecoration(
+        color: _slateSurface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      padding: const EdgeInsets.all(4),
+      child: Row(
+        children: [
+          Expanded(
+            child: _buildModeTab(
+              label: '📋 Structured Input',
+              mode: InputMode.structured,
+              isSelected: _inputMode == InputMode.structured,
+              onTap: () => setState(() => _inputMode = InputMode.structured),
             ),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: _buildModeTab(
+              label: '🤖 AI Input',
+              mode: InputMode.ai,
+              isSelected: _inputMode == InputMode.ai,
+              onTap: () => setState(() => _inputMode = InputMode.ai),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Build individual mode tab
+  Widget _buildModeTab({
+    required String label,
+    required InputMode mode,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.white : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.06),
+                    blurRadius: 8,
+                  ),
+                ]
+              : null,
+        ),
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            color: isSelected ? _primaryBlue : AppColors.textMuted,
+            fontSize: 13,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Build structured input form (existing form)
+  Widget _buildStructuredInputForm() {
+    final suggestions = _branchSuggestions;
+    final hasMatch = _matchedOrganization.isNotEmpty;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Starting Location',
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
+        _StartLocationTile(
+          title: 'Use Current Location',
+          subtitle: 'GPS detected location',
+          value: StartLocationType.current,
+          groupValue: _startLocationType,
+          onChanged: (v) {
+            setState(() => _startLocationType = v);
+            if (v == StartLocationType.current) {
+              _getCurrentLocation();
+            }
+          },
+        ),
+        const SizedBox(height: 10),
+        _StartLocationTile(
+          title: 'Choose Location Manually',
+          subtitle: 'Select from map',
+          value: StartLocationType.custom,
+          groupValue: _startLocationType,
+          onChanged: (v) => setState(() => _startLocationType = v),
+        ),
+        if (_startLocationType == StartLocationType.current &&
+            _currentLocationText != null) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: _softBlue,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              _currentLocationText!,
+              style: const TextStyle(fontSize: 12, color: _primaryBlue),
+            ),
+          ),
+        ],
+        if (_startLocationType == StartLocationType.custom) ...[
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _openMapPicker,
+              icon: const Icon(Icons.map_rounded),
+              label: const Text('Pick Location from Map'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _primaryBlue,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+          ),
+          if (_selectedStartLocation != null) ...[
             const SizedBox(height: 8),
-            _StartLocationTile(
-              title: 'Use Current Location',
-              subtitle: 'GPS detected location',
-              value: StartLocationType.current,
-              groupValue: _startLocationType,
-              onChanged: (v) {
-                setState(() => _startLocationType = v);
-                if (v == StartLocationType.current) {
-                  _getCurrentLocation();
-                }
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: _softBlue,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _selectedStartLocation!.name,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: _primaryBlue,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _selectedStartLocation!.address,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+        const SizedBox(height: 20),
+        const Text(
+          'Task Name',
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
+        TextFormField(
+          controller: _taskName,
+          decoration: _inputDecoration('Ex: Open bank account'),
+          textInputAction: TextInputAction.next,
+          validator: (v) =>
+              Validators.required(v, message: 'Ажлын нэр шаардлагатай.'),
+        ),
+        const SizedBox(height: 18),
+        const Text(
+          'Organization / Place Name',
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
+        TextFormField(
+          controller: _organizationController,
+          decoration: _inputDecoration('Search for places...'),
+          textInputAction: TextInputAction.next,
+          onChanged: _searchPlaces,
+          validator: (v) =>
+              Validators.required(v, message: 'Байгууллагын нэр шаардлагатай.'),
+        ),
+        if (_isSearchingPlaces) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: const SizedBox(
+              height: 40,
+              child: Center(child: CircularProgressIndicator()),
+            ),
+          ),
+        ] else if (_placePredictions.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Container(
+            constraints: const BoxConstraints(maxHeight: 300),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.border),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.06),
+                  blurRadius: 16,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: _placePredictions.length,
+              itemBuilder: (context, index) {
+                final place = _placePredictions[index];
+                return InkWell(
+                  onTap: () => _selectPlace(place),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        bottom: index < _placePredictions.length - 1
+                            ? const BorderSide(color: AppColors.border)
+                            : BorderSide.none,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          place.mainText,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          place.secondaryText,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textMuted,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                );
               },
             ),
-            const SizedBox(height: 10),
-            _StartLocationTile(
-              title: 'Choose Location Manually',
-              subtitle: 'Select from map',
-              value: StartLocationType.custom,
-              groupValue: _startLocationType,
-              onChanged: (v) => setState(() => _startLocationType = v),
-            ),
-            if (_startLocationType == StartLocationType.current &&
-                _currentLocationText != null) ...[
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: _softBlue,
-                  borderRadius: BorderRadius.circular(12),
-                ),
+          ),
+        ],
+        if (hasMatch) ...[
+          const SizedBox(height: 18),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              const Expanded(
                 child: Text(
-                  _currentLocationText!,
-                  style: const TextStyle(fontSize: 12, color: _primaryBlue),
+                  'Nearby Branches',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontWeight: FontWeight.w600),
                 ),
               ),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: _branchOptions.isEmpty
+                    ? null
+                    : () {
+                        setState(() {
+                          _selectedBranch = _branchOptions.first;
+                          _branchError = null;
+                        });
+                      },
+                child: const Text('AI Select Best Branch'),
+              ),
             ],
-            if (_startLocationType == StartLocationType.custom) ...[
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
+          ),
+          const SizedBox(height: 8),
+          Column(
+            children: _branchOptions.map((branch) {
+              final selected = _selectedBranch == branch;
+              return Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                decoration: BoxDecoration(
+                  color: selected ? _softBlue : Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: selected ? _primaryBlue : AppColors.border,
+                    width: selected ? 1.4 : 1,
+                  ),
+                ),
+                child: ListTile(
+                  onTap: () {
+                    setState(() {
+                      _selectedBranch = branch;
+                      _branchError = null;
+                    });
+                  },
+                  title: Text(
+                    branch,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: const Text(
+                    '12-18 min away',
+                    style: TextStyle(color: AppColors.textMuted),
+                  ),
+                  trailing: selected
+                      ? Container(
+                          width: 26,
+                          height: 26,
+                          decoration: const BoxDecoration(
+                            color: _primaryBlue,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.check,
+                            size: 16,
+                            color: Colors.white,
+                          ),
+                        )
+                      : null,
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+        if (_branchError != null) ...[
+          const SizedBox(height: 6),
+          Text(
+            _branchError!,
+            style: const TextStyle(color: AppColors.error, fontSize: 12),
+          ),
+        ],
+        const SizedBox(height: 18),
+        const Text(
+          'Priority',
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<TaskPriority>(
+          initialValue: _priority,
+          decoration: _inputDecoration('Select priority'),
+          items: TaskPriority.values
+              .map(
+                (priority) => DropdownMenuItem(
+                  value: priority,
+                  child: Text(_priorityLabel(priority)),
+                ),
+              )
+              .toList(),
+          onChanged: (value) {
+            if (value == null) return;
+            setState(() => _priority = value);
+          },
+        ),
+        const SizedBox(height: 20),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton(
+            onPressed: _addTask,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _primaryBlue,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+              ),
+              textStyle: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            child: const Text('+ Add Task'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Build AI-powered natural language input form
+  Widget _buildAIInputForm() {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF0F4FF),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFDDE5FF)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(
+                      Icons.lightbulb_outline,
+                      color: _primaryBlue,
+                      size: 20,
+                    ),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Describe your task in natural language',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: _primaryBlue,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Example: "Need to open a bank account at Khan Bank Zaisan branch tomorrow morning, high priority"',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textMuted,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Task Description',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          TextFormField(
+            controller: _aiInputController,
+            decoration: InputDecoration(
+              hintText: 'Describe your task...',
+              hintStyle: const TextStyle(color: AppColors.textMuted),
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 14,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(18),
+                borderSide: const BorderSide(color: AppColors.border),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(18),
+                borderSide: const BorderSide(color: _primaryBlue, width: 1.5),
+              ),
+            ),
+            maxLines: 4,
+            minLines: 3,
+            textInputAction: TextInputAction.newline,
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _isExtracting ? null : _extractTaskFromAI,
+              icon: _isExtracting
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.auto_awesome),
+              label: Text(
+                _isExtracting ? 'Processing...' : '✨ Extract with AI',
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _primaryBlue,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                ),
+              ),
+            ),
+          ),
+          if (_extractionError != null) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFEE2E2),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.error),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.error_outline,
+                    color: AppColors.error,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _extractionError!,
+                      style: const TextStyle(
+                        color: AppColors.error,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          if (_extractedTask != null) ...[
+            const SizedBox(height: 20),
+            _buildExtractedTaskPreview(),
+          ],
+        ],
+      );
+    }
+
+  /// Build preview of extracted task data
+  Widget _buildExtractedTaskPreview() {
+      final extracted = _extractedTask!;
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFECFDF5),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFA7F3D0)),
+            ),
+            child: const Row(
+              children: [
+                Icon(
+                  Icons.check_circle_outline,
+                  color: Color(0xFF059669),
+                  size: 18,
+                ),
+                SizedBox(width: 8),
+                Text(
+                  'Task information extracted successfully!',
+                  style: TextStyle(
+                    color: Color(0xFF059669),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          Container(
+            decoration: BoxDecoration(
+              color: _slateSurface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.border),
+            ),
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (extracted.taskName != null) ...[
+                  _buildPreviewField('📝 Task Name', extracted.taskName!),
+                  const SizedBox(height: 12),
+                ],
+                if (extracted.organization != null) ...[
+                  _buildPreviewField(
+                    '🏢 Organization',
+                    extracted.organization!,
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                if (extracted.branch != null) ...[
+                  _buildPreviewField('🏪 Branch', extracted.branch!),
+                  const SizedBox(height: 12),
+                ],
+                if (extracted.priority != null) ...[
+                  _buildPreviewField(
+                    '⚡ Priority',
+                    _priorityLabel(extracted.priority!).toUpperCase(),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                Text(
+                  'Confidence: ${(extracted.confidenceScore * 100).toStringAsFixed(0)}%',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
                 child: ElevatedButton.icon(
-                  onPressed: _openMapPicker,
-                  icon: const Icon(Icons.map_rounded),
-                  label: const Text('Pick Location from Map'),
+                  onPressed: _rejectExtractedTask,
+                  icon: const Icon(Icons.close),
+                  label: const Text('Reject'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: AppColors.textMuted,
+                    side: const BorderSide(color: AppColors.border),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () => _applyExtractedTask(extracted),
+                  icon: const Icon(Icons.check),
+                  label: const Text('Apply & Continue'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: _primaryBlue,
                     foregroundColor: Colors.white,
@@ -499,278 +1192,40 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                   ),
                 ),
               ),
-              if (_selectedStartLocation != null) ...[
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: _softBlue,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _selectedStartLocation!.name,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: _primaryBlue,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _selectedStartLocation!.address,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: AppColors.textMuted,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
             ],
-            const SizedBox(height: 20),
-            const Text(
-              'Task Name',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+          ),
+        ],
+      );
+    }
+
+  /// Build individual preview field
+  Widget _buildPreviewField(String label, String value) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textMuted,
             ),
-            const SizedBox(height: 8),
-            TextFormField(
-              controller: _taskName,
-              decoration: _inputDecoration('Ex: Open bank account'),
-              textInputAction: TextInputAction.next,
-              validator: (v) =>
-                  Validators.required(v, message: 'Ажлын нэр шаардлагатай.'),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textDark,
             ),
-            const SizedBox(height: 18),
-            const Text(
-              'Organization / Place Name',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 8),
-            TextFormField(
-              controller: _organizationController,
-              decoration: _inputDecoration('Search for places...'),
-              textInputAction: TextInputAction.next,
-              onChanged: _searchPlaces,
-              validator: (v) => Validators.required(
-                v,
-                message: 'Байгууллагын нэр шаардлагатай.',
-              ),
-            ),
-            if (_isSearchingPlaces) ...[
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.border),
-                ),
-                child: const SizedBox(
-                  height: 40,
-                  child: Center(child: CircularProgressIndicator()),
-                ),
-              ),
-            ] else if (_placePredictions.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Container(
-                constraints: const BoxConstraints(maxHeight: 300),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.border),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.06),
-                      blurRadius: 16,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: _placePredictions.length,
-                  itemBuilder: (context, index) {
-                    final place = _placePredictions[index];
-                    return InkWell(
-                      onTap: () => _selectPlace(place),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 12,
-                        ),
-                        decoration: BoxDecoration(
-                          border: Border(
-                            bottom: index < _placePredictions.length - 1
-                                ? const BorderSide(color: AppColors.border)
-                                : BorderSide.none,
-                          ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              place.mainText,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w600,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              place.secondaryText,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: AppColors.textMuted,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
-            if (hasMatch) ...[
-              const SizedBox(height: 18),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  const Expanded(
-                    child: Text(
-                      'Nearby Branches',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  TextButton(
-                    onPressed: _branchOptions.isEmpty
-                        ? null
-                        : () {
-                            setState(() {
-                              _selectedBranch = _branchOptions.first;
-                              _branchError = null;
-                            });
-                          },
-                    child: const Text('AI Select Best Branch'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Column(
-                children: _branchOptions.map((branch) {
-                  final selected = _selectedBranch == branch;
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    decoration: BoxDecoration(
-                      color: selected ? _softBlue : Colors.white,
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(
-                        color: selected ? _primaryBlue : AppColors.border,
-                        width: selected ? 1.4 : 1,
-                      ),
-                    ),
-                    child: ListTile(
-                      onTap: () {
-                        setState(() {
-                          _selectedBranch = branch;
-                          _branchError = null;
-                        });
-                      },
-                      title: Text(
-                        branch,
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                      subtitle: const Text(
-                        '12-18 min away',
-                        style: TextStyle(color: AppColors.textMuted),
-                      ),
-                      trailing: selected
-                          ? Container(
-                              width: 26,
-                              height: 26,
-                              decoration: const BoxDecoration(
-                                color: _primaryBlue,
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(
-                                Icons.check,
-                                size: 16,
-                                color: Colors.white,
-                              ),
-                            )
-                          : null,
-                    ),
-                  );
-                }).toList(),
-              ),
-            ],
-            if (_branchError != null) ...[
-              const SizedBox(height: 6),
-              Text(
-                _branchError!,
-                style: const TextStyle(color: AppColors.error, fontSize: 12),
-              ),
-            ],
-            const SizedBox(height: 18),
-            const Text(
-              'Priority',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<TaskPriority>(
-              initialValue: _priority,
-              decoration: _inputDecoration('Select priority'),
-              items: TaskPriority.values
-                  .map(
-                    (priority) => DropdownMenuItem(
-                      value: priority,
-                      child: Text(_priorityLabel(priority)),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (value) {
-                if (value == null) return;
-                setState(() => _priority = value);
-              },
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: _addTask,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _primaryBlue,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  textStyle: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                child: const Text('+ Add Task'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+          ),
+        ],
+      );
+    }
   }
 
   Widget _buildTaskListCard() {
-    return Container(
       decoration: _cardDecoration(),
       padding: const EdgeInsets.all(24),
       child: Column(

@@ -27,7 +27,7 @@ android {
         applicationId = "com.example.hackhathon"
         
         // Үүнийг өөрчил:
-        minSdk = 21 
+        minSdk = flutter.minSdkVersion 
         
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
