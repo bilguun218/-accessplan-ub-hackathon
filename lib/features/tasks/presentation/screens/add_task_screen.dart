@@ -1222,10 +1222,10 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
           ),
         ],
       );
-    }
   }
 
   Widget _buildTaskListCard() {
+    return Container(
       decoration: _cardDecoration(),
       padding: const EdgeInsets.all(24),
       child: Column(

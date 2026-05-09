@@ -157,6 +157,7 @@ class TaskNlpService {
     }
 
     return null;
+  }
 
   /// Extract organization using pattern matching (fallback)
   String? _extractOrganizationPattern(String input) {
