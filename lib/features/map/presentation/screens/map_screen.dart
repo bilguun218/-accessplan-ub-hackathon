@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -41,12 +42,17 @@ class _MapScreenState extends State<MapScreen> {
 
   GoogleMapController? _controller;
   Timer? _searchDebounce;
+  StreamSubscription<Position>? _positionSub;
+
+  BitmapDescriptor? _liveLocationIcon;
+  BitmapDescriptor? _startPointIcon;
+  Marker? _liveLocationMarker;
+  Marker? _startPointMarker;
 
   String? _permissionMessage;
   String? _errorMessage;
 
   bool _trafficEnabled = true;
-  bool _locationGranted = false;
   bool _isSearching = false;
   bool _isLoadingPlace = false;
 
@@ -66,6 +72,8 @@ class _MapScreenState extends State<MapScreen> {
   String? _routeErrorMessage;
   int? _focusedSegmentIndex;
   LatLng? _currentLatLng;
+  final Set<String> _completedTaskIds = <String>{};
+  List<StandardTask> _routableTasks = <StandardTask>[];
 
   late CameraPosition _initialCameraPosition;
   bool _locationLoaded = false;
@@ -78,16 +86,150 @@ class _MapScreenState extends State<MapScreen> {
       target: LatLng(47.918873, 106.917701),
       zoom: _defaultZoom,
     );
+    _prepareLocationIcons();
     _initLocation();
   }
 
   @override
   void dispose() {
     _searchDebounce?.cancel();
+    _positionSub?.cancel();
     _controller?.dispose();
     _searchCtrl.dispose();
     _searchFocus.dispose();
     super.dispose();
+  }
+
+  Future<void> _prepareLocationIcons() async {
+    final start = await _buildStartPointBitmap();
+    final live = await _buildLiveLocationBitmap();
+    if (!mounted) return;
+    setState(() {
+      _startPointIcon = start;
+      _liveLocationIcon = live;
+      if (_currentLatLng != null && _liveLocationMarker == null) {
+        _liveLocationMarker = _makeLiveLocationMarker(_currentLatLng!);
+      }
+    });
+  }
+
+  Future<BitmapDescriptor> _buildStartPointBitmap() async {
+    const double size = 84;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final center = const Offset(size / 2, size / 2);
+    final radius = size / 2 - 10;
+
+    canvas.drawCircle(
+      Offset(center.dx, center.dy + 4),
+      radius,
+      Paint()
+        ..color = Colors.black.withValues(alpha: 0.28)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
+    );
+    canvas.drawCircle(center, radius + 3, Paint()..color = Colors.white);
+    canvas.drawCircle(center, radius, Paint()..color = const Color(0xFF1E88E5));
+
+    final picture = recorder.endRecording();
+    final image = await picture.toImage(size.toInt(), size.toInt());
+    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+    return BitmapDescriptor.bytes(
+      bytes!.buffer.asUint8List(),
+      width: 26,
+    );
+  }
+
+  Future<BitmapDescriptor> _buildLiveLocationBitmap() async {
+    const double size = 120;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final center = const Offset(size / 2, size / 2);
+    final radius = size / 2 - 10;
+    const blue = Color(0xFF1E88E5);
+    final white = Paint()..color = Colors.white;
+
+    canvas.drawCircle(
+      Offset(center.dx, center.dy + 4),
+      radius,
+      Paint()
+        ..color = Colors.black.withValues(alpha: 0.30)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
+    );
+    canvas.drawCircle(center, radius + 3, Paint()..color = Colors.white);
+    canvas.drawCircle(center, radius, Paint()..color = blue);
+
+    canvas.save();
+    final clip = Path()
+      ..addOval(Rect.fromCircle(center: center, radius: radius));
+    canvas.clipPath(clip);
+
+    canvas.drawCircle(
+      Offset(center.dx, center.dy - radius * 0.28),
+      radius * 0.32,
+      white,
+    );
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(center.dx, center.dy + radius * 0.85),
+        width: radius * 1.55,
+        height: radius * 1.40,
+      ),
+      white,
+    );
+    canvas.restore();
+
+    final picture = recorder.endRecording();
+    final image = await picture.toImage(size.toInt(), size.toInt());
+    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+    return BitmapDescriptor.bytes(
+      bytes!.buffer.asUint8List(),
+      width: 44,
+    );
+  }
+
+  Marker _makeLiveLocationMarker(LatLng pos) {
+    return Marker(
+      markerId: const MarkerId('live_user_location'),
+      position: pos,
+      anchor: const Offset(0.5, 0.5),
+      zIndexInt: 3,
+      infoWindow: const InfoWindow(
+        title: 'Миний одоогийн байршил',
+        snippet: 'GPS дагаж шинэчлэгдэнэ',
+      ),
+      icon: _liveLocationIcon ?? BitmapDescriptor.defaultMarker,
+    );
+  }
+
+  Marker _makeStartPointMarker(LatLng pos) {
+    return Marker(
+      markerId: const MarkerId('route_start_point'),
+      position: pos,
+      anchor: const Offset(0.5, 0.5),
+      zIndexInt: 1,
+      infoWindow: const InfoWindow(
+        title: 'Эхлэх цэг',
+        snippet: 'Маршрут эхэлсэн байршил',
+      ),
+      icon: _startPointIcon ?? BitmapDescriptor.defaultMarker,
+    );
+  }
+
+  void _startLocationStream() {
+    _positionSub?.cancel();
+    _positionSub = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.best,
+        distanceFilter: 4,
+      ),
+    ).listen((pos) {
+      if (!mounted) return;
+      final ll = LatLng(pos.latitude, pos.longitude);
+      setState(() {
+        _currentLatLng = ll;
+        _liveLocationMarker = _makeLiveLocationMarker(ll);
+      });
+    });
   }
 
 
@@ -119,7 +261,6 @@ class _MapScreenState extends State<MapScreen> {
       if (!mounted) return;
 
       setState(() {
-        _locationGranted = true;
         _permissionMessage = null;
       });
 
@@ -152,17 +293,10 @@ class _MapScreenState extends State<MapScreen> {
 
       setState(() {
         _currentLatLng = currentLatLng;
-        _markers = {
-          Marker(
-            markerId: const MarkerId('current_location'),
-            position: currentLatLng,
-            infoWindow: const InfoWindow(title: 'My Current Location'),
-            icon: BitmapDescriptor.defaultMarkerWithHue(
-              BitmapDescriptor.hueAzure,
-            ),
-          ),
-        };
+        _liveLocationMarker = _makeLiveLocationMarker(currentLatLng);
       });
+
+      _startLocationStream();
 
       await _animateTo(currentLatLng, zoom: 16);
 
@@ -201,6 +335,7 @@ class _MapScreenState extends State<MapScreen> {
       _segmentPolylines = <Polyline>{};
       _taskMarkers = <Marker>{};
       _focusedSegmentIndex = null;
+      _startPointMarker = _makeStartPointMarker(origin);
     });
 
     final resolved = <StandardTask>[];
@@ -250,6 +385,10 @@ class _MapScreenState extends State<MapScreen> {
     final segments = <RouteSegment>[];
     final polylines = <Polyline>{};
 
+    final firstPendingIdx = routable.indexWhere(
+      (t) => !_completedTaskIds.contains(t.id),
+    );
+
     LatLng prev = origin;
     String prevLabel = 'Current location';
     for (var i = 0; i < routable.length; i++) {
@@ -266,10 +405,19 @@ class _MapScreenState extends State<MapScreen> {
       final points = result?.points ?? <LatLng>[prev, dest];
       final distanceMeters = result?.distanceMeters ?? 0;
       final durationSeconds = result?.durationSeconds ?? 0;
+      final delaySeconds = _trafficDelaySeconds(durationSeconds);
+
+      final status = _completedTaskIds.contains(t.id)
+          ? RouteTaskStatus.completed
+          : (i == firstPendingIdx
+              ? RouteTaskStatus.current
+              : RouteTaskStatus.pending);
 
       segments.add(
         RouteSegment(
           index: segIndex,
+          taskId: t.id,
+          taskOrder: t.order,
           fromLabel: prevLabel,
           toLabel: t.title,
           toAddress: addresses[t.id] ?? '',
@@ -280,15 +428,21 @@ class _MapScreenState extends State<MapScreen> {
           polyline: points,
           distanceMeters: distanceMeters,
           durationSeconds: durationSeconds,
+          trafficDelaySeconds: delaySeconds,
+          status: status,
         ),
       );
+
+      final lineColor = status == RouteTaskStatus.completed
+          ? const Color(0xFF16A34A)
+          : color;
 
       polylines.add(
         Polyline(
           polylineId: PolylineId('segment_$segIndex'),
           points: points,
           width: 6,
-          color: color,
+          color: lineColor,
           startCap: Cap.roundCap,
           endCap: Cap.roundCap,
           jointType: JointType.round,
@@ -301,10 +455,11 @@ class _MapScreenState extends State<MapScreen> {
       prevLabel = t.title;
     }
 
-    final markers = await _buildTaskMarkers(routable);
+    final markers = await _buildTaskMarkers(routable, firstPendingIdx);
 
     if (!mounted) return;
     setState(() {
+      _routableTasks = routable;
       _segments = segments;
       _segmentPolylines = polylines;
       _taskMarkers = markers;
@@ -314,10 +469,19 @@ class _MapScreenState extends State<MapScreen> {
     await _fitBounds(origin, segments);
   }
 
-  Future<Set<Marker>> _buildTaskMarkers(List<StandardTask> tasks) async {
+  Future<Set<Marker>> _buildTaskMarkers(
+    List<StandardTask> tasks,
+    int currentIdx,
+  ) async {
     final markers = <Marker>{};
     for (var i = 0; i < tasks.length; i++) {
       final t = tasks[i];
+      final status = _completedTaskIds.contains(t.id)
+          ? RouteTaskStatus.completed
+          : (i == currentIdx
+              ? RouteTaskStatus.current
+              : RouteTaskStatus.pending);
+      final icon = await _taskMarkerBitmap(t.order, status);
       markers.add(
         Marker(
           markerId: MarkerId('task_${t.id}'),
@@ -326,27 +490,187 @@ class _MapScreenState extends State<MapScreen> {
             title: '${t.order}. ${t.title}',
             snippet: t.locationText.isNotEmpty ? t.locationText : t.category,
           ),
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-            _hueForIndex(i),
-          ),
+          icon: icon,
+          zIndexInt: status == RouteTaskStatus.current ? 2 : 1,
+          onTap: () => _onSegmentTap(i),
         ),
       );
     }
     return markers;
   }
 
-  double _hueForIndex(int i) {
-    const hues = <double>[
-      BitmapDescriptor.hueBlue,
-      BitmapDescriptor.hueRed,
-      BitmapDescriptor.hueGreen,
-      BitmapDescriptor.hueOrange,
-      BitmapDescriptor.hueViolet,
-      BitmapDescriptor.hueRose,
-      BitmapDescriptor.hueCyan,
-      BitmapDescriptor.hueYellow,
-    ];
-    return hues[i % hues.length];
+  static const Color _statusGreen = Color(0xFF16A34A);
+  static const Color _statusBlue = Color(0xFF2563EB);
+  static const Color _statusGray = Color(0xFF9CA3AF);
+
+  Color _statusColor(RouteTaskStatus status) {
+    switch (status) {
+      case RouteTaskStatus.completed:
+        return _statusGreen;
+      case RouteTaskStatus.current:
+        return _statusBlue;
+      case RouteTaskStatus.pending:
+        return _statusGray;
+    }
+  }
+
+  Future<BitmapDescriptor> _taskMarkerBitmap(
+    int number,
+    RouteTaskStatus status,
+  ) async {
+    const double size = 84;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+
+    final fill = _statusColor(status);
+    final center = const Offset(size / 2, size / 2 - 4);
+    final radius = size / 2 - 12;
+
+    // Soft shadow
+    canvas.drawCircle(
+      Offset(center.dx, center.dy + 4),
+      radius,
+      Paint()
+        ..color = Colors.black.withValues(alpha: 0.28)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
+    );
+
+    // White ring
+    canvas.drawCircle(
+      center,
+      radius + 3,
+      Paint()..color = Colors.white,
+    );
+
+    // Filled status circle
+    canvas.drawCircle(center, radius, Paint()..color = fill);
+
+    // Highlight ring for current
+    if (status == RouteTaskStatus.current) {
+      canvas.drawCircle(
+        center,
+        radius + 6,
+        Paint()
+          ..color = fill.withValues(alpha: 0.30)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 4,
+      );
+    }
+
+    // Pin tail
+    final tailPath = Path()
+      ..moveTo(center.dx - 8, center.dy + radius - 1)
+      ..lineTo(center.dx + 8, center.dy + radius - 1)
+      ..lineTo(center.dx, center.dy + radius + 12)
+      ..close();
+    canvas.drawPath(tailPath, Paint()..color = fill);
+
+    // Number or check
+    if (status == RouteTaskStatus.completed) {
+      final p = Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 5
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round;
+      final path = Path()
+        ..moveTo(center.dx - 12, center.dy + 1)
+        ..lineTo(center.dx - 3, center.dy + 10)
+        ..lineTo(center.dx + 13, center.dy - 8);
+      canvas.drawPath(path, p);
+    } else {
+      final tp = TextPainter(
+        text: TextSpan(
+          text: '$number',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 32,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(
+        canvas,
+        Offset(center.dx - tp.width / 2, center.dy - tp.height / 2),
+      );
+    }
+
+    final picture = recorder.endRecording();
+    final image = await picture.toImage(size.toInt(), size.toInt());
+    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+    return BitmapDescriptor.bytes(
+      bytes!.buffer.asUint8List(),
+      width: 44,
+    );
+  }
+
+  int _trafficDelaySeconds(int durationSeconds) {
+    if (!_trafficEnabled || durationSeconds <= 0) return 0;
+    final hour = DateTime.now().hour;
+    final isPeak = (hour >= 7 && hour <= 9) || (hour >= 17 && hour <= 20);
+    final factor = isPeak ? 0.25 : 0.06;
+    return (durationSeconds * factor).round();
+  }
+
+  Future<void> _toggleTaskCompletion(int segmentIndex) async {
+    if (segmentIndex < 0 || segmentIndex >= _segments.length) return;
+    final seg = _segments[segmentIndex];
+    setState(() {
+      if (_completedTaskIds.contains(seg.taskId)) {
+        _completedTaskIds.remove(seg.taskId);
+      } else {
+        _completedTaskIds.add(seg.taskId);
+      }
+    });
+    await _refreshStatuses();
+  }
+
+  Future<void> _refreshStatuses() async {
+    if (_routableTasks.isEmpty) return;
+    final firstPendingIdx = _routableTasks.indexWhere(
+      (t) => !_completedTaskIds.contains(t.id),
+    );
+
+    final updatedSegments = <RouteSegment>[];
+    for (var i = 0; i < _segments.length; i++) {
+      final s = _segments[i];
+      final status = _completedTaskIds.contains(s.taskId)
+          ? RouteTaskStatus.completed
+          : (i == firstPendingIdx
+              ? RouteTaskStatus.current
+              : RouteTaskStatus.pending);
+      updatedSegments.add(s.copyWith(status: status));
+    }
+
+    final updatedPolylines = <Polyline>{};
+    for (var i = 0; i < updatedSegments.length; i++) {
+      final s = updatedSegments[i];
+      final color = s.status == RouteTaskStatus.completed
+          ? _statusGreen
+          : _segmentColor(i);
+      updatedPolylines.add(
+        Polyline(
+          polylineId: PolylineId('segment_$i'),
+          points: s.polyline,
+          width: 6,
+          color: color,
+          startCap: Cap.roundCap,
+          endCap: Cap.roundCap,
+          jointType: JointType.round,
+          consumeTapEvents: true,
+          onTap: () => _onSegmentTap(i),
+        ),
+      );
+    }
+
+    final markers = await _buildTaskMarkers(_routableTasks, firstPendingIdx);
+    if (!mounted) return;
+    setState(() {
+      _segments = updatedSegments;
+      _segmentPolylines = updatedPolylines;
+      _taskMarkers = markers;
+    });
   }
 
   Future<void> _fitBounds(LatLng origin, List<RouteSegment> segments) async {
@@ -657,9 +981,14 @@ class _MapScreenState extends State<MapScreen> {
             initialCameraPosition: _initialCameraPosition,
             mapType: _mapType,
             trafficEnabled: _trafficEnabled,
-            markers: {..._markers, ..._taskMarkers},
+            markers: {
+              ..._markers,
+              ..._taskMarkers,
+              if (_startPointMarker != null) _startPointMarker!,
+              if (_liveLocationMarker != null) _liveLocationMarker!,
+            },
             polylines: _segmentPolylines,
-            myLocationEnabled: _locationGranted,
+            myLocationEnabled: false,
             myLocationButtonEnabled: false,
             zoomControlsEnabled: false,
             compassEnabled: true,
@@ -764,6 +1093,7 @@ class _MapScreenState extends State<MapScreen> {
                 errorMessage: _routeErrorMessage,
                 focusedIndex: _focusedSegmentIndex,
                 onTapSegment: _onSegmentTap,
+                onToggleComplete: _toggleTaskCompletion,
                 onDismissFocus: () =>
                     setState(() => _focusedSegmentIndex = null),
               ),

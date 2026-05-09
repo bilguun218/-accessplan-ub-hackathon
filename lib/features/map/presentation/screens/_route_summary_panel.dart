@@ -12,6 +12,7 @@ class RouteSummaryPanel extends StatelessWidget {
     required this.focusedIndex,
     required this.onTapSegment,
     required this.onDismissFocus,
+    required this.onToggleComplete,
   });
 
   final List<RouteSegment> segments;
@@ -20,20 +21,33 @@ class RouteSummaryPanel extends StatelessWidget {
   final int? focusedIndex;
   final ValueChanged<int> onTapSegment;
   final VoidCallback onDismissFocus;
+  final ValueChanged<int> onToggleComplete;
 
-  static const List<Color> _segmentColors = <Color>[
-    Color(0xFF2563EB),
-    Color(0xFFDC2626),
-    Color(0xFF059669),
-    Color(0xFFD97706),
-    Color(0xFF7C3AED),
-    Color(0xFFDB2777),
-    Color(0xFF0891B2),
-    Color(0xFF65A30D),
-  ];
+  static const Color _green = Color(0xFF16A34A);
+  static const Color _blue = Color(0xFF2563EB);
+  static const Color _gray = Color(0xFF9CA3AF);
 
-  Color _segmentColorFor(int index) =>
-      _segmentColors[index % _segmentColors.length];
+  Color _statusColor(RouteTaskStatus s) {
+    switch (s) {
+      case RouteTaskStatus.completed:
+        return _green;
+      case RouteTaskStatus.current:
+        return _blue;
+      case RouteTaskStatus.pending:
+        return _gray;
+    }
+  }
+
+  String _statusLabel(RouteTaskStatus s) {
+    switch (s) {
+      case RouteTaskStatus.completed:
+        return 'Дууссан';
+      case RouteTaskStatus.current:
+        return 'Идэвхтэй';
+      case RouteTaskStatus.pending:
+        return 'Хүлээгдэж буй';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -45,6 +59,12 @@ class RouteSummaryPanel extends StatelessWidget {
       0,
       (sum, s) => sum + s.durationSeconds,
     );
+    final totalDelay = segments.fold<int>(
+      0,
+      (sum, s) => sum + s.trafficDelaySeconds,
+    );
+    final completedCount =
+        segments.where((s) => s.status == RouteTaskStatus.completed).length;
 
     final focused = focusedIndex != null &&
             focusedIndex! >= 0 &&
@@ -94,6 +114,25 @@ class RouteSummaryPanel extends StatelessWidget {
                         ),
                       ),
                     ),
+                    if (segments.isNotEmpty)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _green.withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          '$completedCount/${segments.length}',
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w800,
+                            color: _green,
+                          ),
+                        ),
+                      ),
                     if (focused != null)
                       IconButton(
                         onPressed: onDismissFocus,
@@ -125,113 +164,53 @@ class RouteSummaryPanel extends StatelessWidget {
                   const SizedBox(height: 6),
                   _FocusedTaskCard(
                     segment: focused,
-                    color: _segmentColorFor(focused.index),
+                    color: _statusColor(focused.status),
+                    statusLabel: _statusLabel(focused.status),
+                    onToggleComplete: () => onToggleComplete(focused.index),
                   ),
                 ] else if (segments.isNotEmpty) ...[
                   const SizedBox(height: 6),
-                  Text(
-                    '${segments.length} ажил  ·  ${(totalDistance / 1000).toStringAsFixed(1)} км  ·  ${(totalDuration / 60).round()} мин',
-                    style: const TextStyle(
-                      fontSize: 12.5,
-                      color: AppColors.textMuted,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 4,
+                    children: [
+                      _summaryChip(
+                        Icons.flag_rounded,
+                        '${segments.length} ажил',
+                      ),
+                      _summaryChip(
+                        Icons.straighten_rounded,
+                        '${(totalDistance / 1000).toStringAsFixed(1)} км',
+                      ),
+                      _summaryChip(
+                        Icons.schedule_rounded,
+                        '${((totalDuration + totalDelay) / 60).round()} мин',
+                      ),
+                      if (totalDelay > 0)
+                        _summaryChip(
+                          Icons.traffic_rounded,
+                          '+${(totalDelay / 60).round()} мин түгжрэл',
+                          color: const Color(0xFFD97706),
+                        ),
+                    ],
                   ),
                   const SizedBox(height: 8),
                   ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 220),
+                    constraints: const BoxConstraints(maxHeight: 240),
                     child: ListView.separated(
                       shrinkWrap: true,
                       padding: EdgeInsets.zero,
                       physics: const ClampingScrollPhysics(),
                       itemCount: segments.length,
-                      separatorBuilder: (_, __) => Divider(
-                        height: 1,
-                        thickness: 1,
-                        color: Colors.black.withValues(alpha: 0.05),
-                      ),
+                      separatorBuilder: (_, __) => const SizedBox(height: 6),
                       itemBuilder: (context, index) {
                         final s = segments[index];
-                        return InkWell(
+                        return _TaskRow(
+                          segment: s,
+                          color: _statusColor(s.status),
+                          statusLabel: _statusLabel(s.status),
                           onTap: () => onTapSegment(index),
-                          child: Padding(
-                            padding:
-                                const EdgeInsets.symmetric(vertical: 10),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Container(
-                                  width: 28,
-                                  height: 28,
-                                  decoration: BoxDecoration(
-                                    color: _segmentColorFor(index),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  alignment: Alignment.center,
-                                  child: Text(
-                                    '${index + 1}',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 12.5,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        s.toLabel,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          fontSize: 13.5,
-                                          fontWeight: FontWeight.w700,
-                                          color: AppColors.textDark,
-                                        ),
-                                      ),
-                                      if (s.toAddress.isNotEmpty)
-                                        Padding(
-                                          padding:
-                                              const EdgeInsets.only(top: 2),
-                                          child: Text(
-                                            s.toAddress,
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(
-                                              fontSize: 11.5,
-                                              color: AppColors.textMuted,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                          ),
-                                        ),
-                                      Padding(
-                                        padding:
-                                            const EdgeInsets.only(top: 4),
-                                        child: Text(
-                                          '${s.distanceKm.toStringAsFixed(1)} км · ${s.durationMinutes} мин',
-                                          style: const TextStyle(
-                                            fontSize: 11.5,
-                                            color: AppColors.textMuted,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                const Icon(
-                                  Icons.center_focus_strong_rounded,
-                                  size: 18,
-                                  color: AppColors.textMuted,
-                                ),
-                              ],
-                            ),
-                          ),
+                          onToggleComplete: () => onToggleComplete(index),
                         );
                       },
                     ),
@@ -244,15 +223,257 @@ class RouteSummaryPanel extends StatelessWidget {
       ),
     );
   }
+
+  Widget _summaryChip(IconData icon, String text, {Color? color}) {
+    final c = color ?? AppColors.textMuted;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 13, color: c),
+        const SizedBox(width: 4),
+        Text(
+          text,
+          style: TextStyle(
+            fontSize: 12,
+            color: c,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
+    );
+  }
 }
 
-class _FocusedTaskCard extends StatelessWidget {
-  const _FocusedTaskCard({required this.segment, required this.color});
+class _TaskRow extends StatelessWidget {
+  const _TaskRow({
+    required this.segment,
+    required this.color,
+    required this.statusLabel,
+    required this.onTap,
+    required this.onToggleComplete,
+  });
+
   final RouteSegment segment;
+  final Color color;
+  final String statusLabel;
+  final VoidCallback onTap;
+  final VoidCallback onToggleComplete;
+
+  @override
+  Widget build(BuildContext context) {
+    final isCompleted = segment.status == RouteTaskStatus.completed;
+    final isCurrent = segment.status == RouteTaskStatus.current;
+
+    final bg = isCompleted
+        ? color.withValues(alpha: 0.12)
+        : isCurrent
+            ? color.withValues(alpha: 0.10)
+            : Colors.white;
+    final borderColor = isCurrent
+        ? color
+        : isCompleted
+            ? color.withValues(alpha: 0.45)
+            : Colors.black.withValues(alpha: 0.06);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: borderColor,
+              width: isCurrent ? 1.6 : 1,
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: isCurrent
+                      ? [
+                          BoxShadow(
+                            color: color.withValues(alpha: 0.45),
+                            blurRadius: 10,
+                            offset: const Offset(0, 3),
+                          ),
+                        ]
+                      : null,
+                ),
+                alignment: Alignment.center,
+                child: isCompleted
+                    ? const Icon(
+                        Icons.check_rounded,
+                        color: Colors.white,
+                        size: 18,
+                      )
+                    : Text(
+                        '${segment.taskOrder}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            segment.toLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textDark,
+                              decoration: isCompleted
+                                  ? TextDecoration.lineThrough
+                                  : null,
+                              decorationColor:
+                                  AppColors.textMuted.withValues(alpha: 0.6),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        _StatusBadge(label: statusLabel, color: color),
+                      ],
+                    ),
+                    if (segment.toAddress.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          segment.toAddress,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            color: AppColors.textMuted,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Wrap(
+                        spacing: 10,
+                        runSpacing: 4,
+                        children: [
+                          _metric(
+                            Icons.straighten_rounded,
+                            '${segment.distanceKm.toStringAsFixed(1)} км',
+                          ),
+                          _metric(
+                            Icons.schedule_rounded,
+                            '${segment.durationMinutes} мин',
+                          ),
+                          if (segment.trafficDelaySeconds > 0)
+                            _metric(
+                              Icons.traffic_rounded,
+                              '+${segment.trafficDelayMinutes} мин',
+                              color: const Color(0xFFD97706),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              IconButton(
+                onPressed: onToggleComplete,
+                visualDensity: VisualDensity.compact,
+                tooltip:
+                    isCompleted ? 'Дуусаагүй болгох' : 'Дууссан гэж тэмдэглэх',
+                icon: Icon(
+                  isCompleted
+                      ? Icons.check_circle_rounded
+                      : Icons.radio_button_unchecked_rounded,
+                  color: isCompleted ? color : AppColors.textMuted,
+                  size: 22,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _metric(IconData icon, String text, {Color? color}) {
+    final c = color ?? AppColors.textMuted;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 12, color: c),
+        const SizedBox(width: 3),
+        Text(
+          text,
+          style: TextStyle(
+            fontSize: 11.5,
+            color: c,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _StatusBadge extends StatelessWidget {
+  const _StatusBadge({required this.label, required this.color});
+  final String label;
   final Color color;
 
   @override
   Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10.5,
+          fontWeight: FontWeight.w800,
+          color: color,
+        ),
+      ),
+    );
+  }
+}
+
+class _FocusedTaskCard extends StatelessWidget {
+  const _FocusedTaskCard({
+    required this.segment,
+    required this.color,
+    required this.statusLabel,
+    required this.onToggleComplete,
+  });
+  final RouteSegment segment;
+  final Color color;
+  final String statusLabel;
+  final VoidCallback onToggleComplete;
+
+  @override
+  Widget build(BuildContext context) {
+    final isCompleted = segment.status == RouteTaskStatus.completed;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -273,14 +494,20 @@ class _FocusedTaskCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 alignment: Alignment.center,
-                child: Text(
-                  '${segment.index + 1}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
+                child: isCompleted
+                    ? const Icon(
+                        Icons.check_rounded,
+                        color: Colors.white,
+                        size: 18,
+                      )
+                    : Text(
+                        '${segment.taskOrder}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -288,13 +515,17 @@ class _FocusedTaskCard extends StatelessWidget {
                   segment.toLabel,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 14.5,
                     fontWeight: FontWeight.w800,
                     color: AppColors.textDark,
+                    decoration:
+                        isCompleted ? TextDecoration.lineThrough : null,
                   ),
                 ),
               ),
+              const SizedBox(width: 6),
+              _StatusBadge(label: statusLabel, color: color),
             ],
           ),
           if (segment.toAddress.isNotEmpty) ...[
@@ -360,7 +591,49 @@ class _FocusedTaskCard extends StatelessWidget {
                   color: AppColors.textDark,
                 ),
               ),
+              if (segment.trafficDelaySeconds > 0) ...[
+                const SizedBox(width: 14),
+                const Icon(Icons.traffic_rounded,
+                    size: 14, color: Color(0xFFD97706)),
+                const SizedBox(width: 4),
+                Text(
+                  '+${segment.trafficDelayMinutes} мин',
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFFD97706),
+                  ),
+                ),
+              ],
             ],
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: onToggleComplete,
+              icon: Icon(
+                isCompleted
+                    ? Icons.refresh_rounded
+                    : Icons.check_circle_rounded,
+                size: 18,
+              ),
+              label: Text(
+                isCompleted ? 'Дуусаагүй болгох' : 'Дууссан гэж тэмдэглэх',
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: color,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                textStyle: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
           ),
         ],
       ),
