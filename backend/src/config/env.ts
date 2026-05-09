@@ -24,5 +24,7 @@ export const env = {
     pass: process.env.SMTP_PASS ?? '',
     from: process.env.SMTP_FROM ?? 'AccessPlan UB <no-reply@accessplan.mn>',
   },
+  geminiApiKey: process.env.GEMINI_API_KEY ?? '',
+  geminiModel: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash',
   isDev: (process.env.NODE_ENV ?? 'development') === 'development',
 };

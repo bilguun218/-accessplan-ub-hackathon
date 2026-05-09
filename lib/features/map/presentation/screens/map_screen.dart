@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -7,19 +6,19 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../../../core/constants/app_colors.dart';
-import '../../../organizations/data/mock/mock_organizations.dart';
-import '../../../organizations/data/models/organization_model.dart';
+import '../../../tasks/data/models/standard_task.dart';
 import '../../data/models/place_detail_model.dart';
 import '../../data/models/place_prediction_model.dart';
-import '../../data/models/ranked_job_route.dart';
-import '../../data/services/job_route_service.dart';
+import '../../data/models/route_segment.dart';
 import '../../data/services/map_api_service.dart';
+import '../../data/services/place_geocoding_service.dart';
+import '../../data/services/segment_route_service.dart';
+import '_route_summary_panel.dart';
 
 class MapScreen extends StatefulWidget {
-  const MapScreen({super.key, this.focusOrganization});
+  const MapScreen({super.key, this.tasks = const <StandardTask>[]});
 
-  /// Open the map with this organization pre-selected: pin + driving route.
-  final Organization? focusOrganization;
+  final List<StandardTask> tasks;
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -37,20 +36,19 @@ class _MapScreenState extends State<MapScreen> {
   final FocusNode _searchFocus = FocusNode();
 
   final MapApiService _mapApiService = MapApiService();
-  final JobRouteService _routeService = JobRouteService();
+  final PlaceGeocodingService _geocodingService = PlaceGeocodingService();
+  final SegmentRouteService _segmentRouteService = SegmentRouteService();
 
   GoogleMapController? _controller;
   Timer? _searchDebounce;
 
   String? _permissionMessage;
   String? _errorMessage;
-  String? _jobsErrorMessage;
 
   bool _trafficEnabled = true;
   bool _locationGranted = false;
   bool _isSearching = false;
   bool _isLoadingPlace = false;
-  bool _isComputingJobs = false;
 
   MapType _mapType = MapType.normal;
 
@@ -59,14 +57,15 @@ class _MapScreenState extends State<MapScreen> {
   PlaceDetailModel? _selectedPlace;
 
   Set<Marker> _markers = <Marker>{};
-  Set<Marker> _jobMarkers = <Marker>{};
-  Set<Polyline> _jobPolylines = <Polyline>{};
 
-  List<RankedJobRoute> _rankedRoutes = <RankedJobRoute>[];
-  int? _focusedRank;
+  // Task-driven route state
+  List<RouteSegment> _segments = <RouteSegment>[];
+  Set<Polyline> _segmentPolylines = <Polyline>{};
+  Set<Marker> _taskMarkers = <Marker>{};
+  bool _isBuildingRoute = false;
+  String? _routeErrorMessage;
+  int? _focusedSegmentIndex;
   LatLng? _currentLatLng;
-
-  static const int kMaxRoutesToShow = 5;
 
   late CameraPosition _initialCameraPosition;
   bool _locationLoaded = false;
@@ -90,6 +89,7 @@ class _MapScreenState extends State<MapScreen> {
     _searchFocus.dispose();
     super.dispose();
   }
+
 
   Future<void> _initLocation() async {
     try {
@@ -165,213 +165,198 @@ class _MapScreenState extends State<MapScreen> {
       });
 
       await _animateTo(currentLatLng, zoom: 16);
-      // Хэрэв тодорхой organization-той орж ирсэн бол түүний route-ыг,
-      // үгүй бол хамгийн боломжит ажлуудыг харуулна.
-      if (widget.focusOrganization != null) {
-        unawaited(_focusOrganizationRoute(widget.focusOrganization!));
-      } else if (_rankedRoutes.isEmpty && !_isComputingJobs) {
-        unawaited(_computeRankedJobs());
+
+      if (widget.tasks.isNotEmpty &&
+          _segments.isEmpty &&
+          !_isBuildingRoute) {
+        unawaited(_buildRouteForTasks());
       }
     } catch (e) {
       debugPrint('Current location error: $e');
     }
   }
 
-  Future<void> _focusOrganizationRoute(Organization org) async {
-    final origin = _currentLatLng ?? const LatLng(47.918873, 106.917701);
-    final destination = LatLng(org.latitude, org.longitude);
+  static const List<Color> _segmentColors = <Color>[
+    Color(0xFF2563EB),
+    Color(0xFFDC2626),
+    Color(0xFF059669),
+    Color(0xFFD97706),
+    Color(0xFF7C3AED),
+    Color(0xFFDB2777),
+    Color(0xFF0891B2),
+    Color(0xFF65A30D),
+  ];
+
+  Color _segmentColor(int index) =>
+      _segmentColors[index % _segmentColors.length];
+
+  Future<void> _buildRouteForTasks() async {
+    final origin = _currentLatLng;
+    if (origin == null || widget.tasks.isEmpty) return;
 
     setState(() {
-      _isComputingJobs = true;
-      _jobsErrorMessage = null;
+      _isBuildingRoute = true;
+      _routeErrorMessage = null;
+      _segments = <RouteSegment>[];
+      _segmentPolylines = <Polyline>{};
+      _taskMarkers = <Marker>{};
+      _focusedSegmentIndex = null;
     });
 
-    // 1. Marker-уудыг шууд харуулна (Haversine + шулуун зам).
-    final straightDistance = haversineMeters(
-      origin.latitude,
-      origin.longitude,
-      org.latitude,
-      org.longitude,
-    ).round();
-
-    final baseline = RankedJobRoute(
-      job: org,
-      rank: 1,
-      distanceMeters: straightDistance,
-      durationSeconds: (straightDistance * 0.12).round(),
-      score: 0,
-      polylinePoints: <LatLng>[origin, destination],
-    );
-
-    var routes = [baseline];
-    var markers = await _buildJobMarkers(routes);
-    var polylines = _buildPolylines(routes);
-
-    if (!mounted) return;
-    setState(() {
-      _rankedRoutes = routes;
-      _jobMarkers = markers;
-      _jobPolylines = polylines;
-    });
-    await _fitBoundsToRoutes(origin, routes);
-
-    // 2. OSRM-аар жинхэнэ замын дагуу зам татна (үнэгүй, key-гүй).
-    final fetched = await _routeService.fetchRouteFor(
-      origin: origin,
-      baseline: baseline,
-    );
-
-    if (!mounted) return;
-
-    if (fetched != null) {
-      routes = [fetched];
-      markers = await _buildJobMarkers(routes);
-      polylines = _buildPolylines(routes);
-      setState(() {
-        _rankedRoutes = routes;
-        _jobMarkers = markers;
-        _jobPolylines = polylines;
-        _isComputingJobs = false;
-      });
-      await _fitBoundsToRoutes(origin, routes);
-    } else {
-      setState(() {
-        _isComputingJobs = false;
-        _jobsErrorMessage =
-            'Замын мэдээлэл татаж чадсангүй. Шулуун зай харуулав.';
-      });
+    final resolved = <StandardTask>[];
+    final addresses = <String, String>{};
+    for (final t in widget.tasks) {
+      if (t.lat != null && t.lng != null) {
+        resolved.add(t);
+        continue;
+      }
+      final query = t.needsPlaceSearch && t.placeSearchQuery.isNotEmpty
+          ? t.placeSearchQuery
+          : (t.locationText.isNotEmpty
+              ? t.locationText
+              : t.placeSearchQuery);
+      if (query.isEmpty) {
+        resolved.add(t);
+        continue;
+      }
+      final geo = await _geocodingService.resolve(query);
+      if (geo != null) {
+        final r = t.copyWith(
+          lat: geo.latLng.latitude,
+          lng: geo.latLng.longitude,
+          locationText: t.locationText.isEmpty ? geo.name : t.locationText,
+        );
+        resolved.add(r);
+        addresses[r.id] = geo.address;
+      } else {
+        resolved.add(t);
+      }
     }
-  }
 
-  Future<void> _computeRankedJobs() async {
-    // Байршил байхгүй бол УБ төвийг origin болгоно (marker заавал гарна).
-    final origin = _currentLatLng ?? const LatLng(47.918873, 106.917701);
+    final routable = resolved
+        .where((t) => t.lat != null && t.lng != null)
+        .toList();
 
-    setState(() {
-      _isComputingJobs = true;
-      _jobsErrorMessage = null;
-    });
+    if (routable.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _isBuildingRoute = false;
+        _routeErrorMessage = 'Аль ч ажилд байршил олдсонгүй.';
+      });
+      return;
+    }
 
-    try {
-      // 1. Эхлээд Haversine-аар ranking хийнэ — API хүлээхгүй.
-      final initial = _routeService.rankJobsLocal(
-        origin: origin,
-        jobs: MockOrganizations.all,
-        limit: kMaxRoutesToShow,
+    // Build segments
+    final segments = <RouteSegment>[];
+    final polylines = <Polyline>{};
+
+    LatLng prev = origin;
+    String prevLabel = 'Current location';
+    for (var i = 0; i < routable.length; i++) {
+      final t = routable[i];
+      final dest = LatLng(t.lat!, t.lng!);
+      final result = await _segmentRouteService.fetch(
+        origin: prev,
+        destination: dest,
       );
 
-      if (!mounted) return;
+      final color = _segmentColor(i);
+      final segIndex = i;
 
-      // 2. Marker-уудыг шууд харуулна (polyline хоосон).
-      final markers = await _buildJobMarkers(initial);
-      setState(() {
-        _rankedRoutes = initial;
-        _jobMarkers = markers;
-        _jobPolylines = <Polyline>{};
-      });
+      final points = result?.points ?? <LatLng>[prev, dest];
+      final distanceMeters = result?.distanceMeters ?? 0;
+      final durationSeconds = result?.durationSeconds ?? 0;
 
-      await _fitBoundsToRoutes(origin, initial);
+      segments.add(
+        RouteSegment(
+          index: segIndex,
+          fromLabel: prevLabel,
+          toLabel: t.title,
+          toAddress: addresses[t.id] ?? '',
+          toCategory: t.category,
+          toTimeText: t.timeText,
+          fromLatLng: prev,
+          toLatLng: dest,
+          polyline: points,
+          distanceMeters: distanceMeters,
+          durationSeconds: durationSeconds,
+        ),
+      );
 
-      // 3. Дараа нь Directions API-р polyline + бодит distance/duration татна.
-      final updated = <RankedJobRoute>[];
-      for (final base in initial) {
-        final fetched = await _routeService.fetchRouteFor(
-          origin: origin,
-          baseline: base,
-        );
-        updated.add(fetched ?? base);
-      }
+      polylines.add(
+        Polyline(
+          polylineId: PolylineId('segment_$segIndex'),
+          points: points,
+          width: 6,
+          color: color,
+          startCap: Cap.roundCap,
+          endCap: Cap.roundCap,
+          jointType: JointType.round,
+          consumeTapEvents: true,
+          onTap: () => _onSegmentTap(segIndex),
+        ),
+      );
 
-      if (!mounted) return;
-
-      // 4. Re-rank score-оор (API-аас бодит дата ирсэн тохиолдолд).
-      updated.sort((a, b) => a.score.compareTo(b.score));
-      final reranked = [
-        for (var i = 0; i < updated.length; i++)
-          updated[i].copyWith(rank: i + 1),
-      ];
-
-      // Rank өөрчлөгдсөн бол marker-уудыг дахин зурна.
-      final newMarkers = await _buildJobMarkers(reranked);
-      final newPolylines = _buildPolylines(reranked);
-
-      if (!mounted) return;
-
-      setState(() {
-        _rankedRoutes = reranked;
-        _jobMarkers = newMarkers;
-        _jobPolylines = newPolylines;
-        _isComputingJobs = false;
-      });
-
-      await _fitBoundsToRoutes(origin, reranked);
-    } catch (e) {
-      debugPrint('Rank jobs error: $e');
-      if (!mounted) return;
-      setState(() {
-        _isComputingJobs = false;
-        _jobsErrorMessage = 'Маршрут татаж чадсангүй.';
-      });
+      prev = dest;
+      prevLabel = t.title;
     }
+
+    final markers = await _buildTaskMarkers(routable);
+
+    if (!mounted) return;
+    setState(() {
+      _segments = segments;
+      _segmentPolylines = polylines;
+      _taskMarkers = markers;
+      _isBuildingRoute = false;
+    });
+
+    await _fitBounds(origin, segments);
   }
 
-  Future<Set<Marker>> _buildJobMarkers(List<RankedJobRoute> ranked) async {
+  Future<Set<Marker>> _buildTaskMarkers(List<StandardTask> tasks) async {
     final markers = <Marker>{};
-    for (final r in ranked) {
-      final icon = await _numberedMarkerIcon(r.rank, isTop: r.rank == 1);
+    for (var i = 0; i < tasks.length; i++) {
+      final t = tasks[i];
       markers.add(
         Marker(
-          markerId: MarkerId('job_${r.rank}'),
-          position: LatLng(r.job.latitude, r.job.longitude),
-          icon: icon,
+          markerId: MarkerId('task_${t.id}'),
+          position: LatLng(t.lat!, t.lng!),
           infoWindow: InfoWindow(
-            title: '${r.rank}. ${r.job.name}',
-            snippet:
-                '${r.distanceKm.toStringAsFixed(1)} км · ${r.durationMinutes} мин',
+            title: '${t.order}. ${t.title}',
+            snippet: t.locationText.isNotEmpty ? t.locationText : t.category,
           ),
-          onTap: () => _focusJob(r.rank),
+          icon: BitmapDescriptor.defaultMarkerWithHue(
+            _hueForIndex(i),
+          ),
         ),
       );
     }
     return markers;
   }
 
-  Set<Polyline> _buildPolylines(List<RankedJobRoute> ranked) {
-    final polylines = <Polyline>{};
-    for (final r in ranked) {
-      if (r.polylinePoints.isEmpty) continue;
-      final isTop = r.rank == 1;
-      final isFocused = _focusedRank == r.rank;
-      polylines.add(
-        Polyline(
-          polylineId: PolylineId('route_${r.rank}'),
-          points: r.polylinePoints,
-          width: isFocused ? 8 : (isTop ? 7 : 4),
-          color: isTop
-              ? AppColors.primary
-              : AppColors.primary.withValues(alpha: isFocused ? 0.95 : 0.45),
-          startCap: Cap.roundCap,
-          endCap: Cap.roundCap,
-          jointType: JointType.round,
-          zIndex: isTop ? 3 : (isFocused ? 2 : 1),
-        ),
-      );
-    }
-    return polylines;
+  double _hueForIndex(int i) {
+    const hues = <double>[
+      BitmapDescriptor.hueBlue,
+      BitmapDescriptor.hueRed,
+      BitmapDescriptor.hueGreen,
+      BitmapDescriptor.hueOrange,
+      BitmapDescriptor.hueViolet,
+      BitmapDescriptor.hueRose,
+      BitmapDescriptor.hueCyan,
+      BitmapDescriptor.hueYellow,
+    ];
+    return hues[i % hues.length];
   }
 
-  Future<void> _fitBoundsToRoutes(
-    LatLng origin,
-    List<RankedJobRoute> ranked,
-  ) async {
-    if (ranked.isEmpty) return;
+  Future<void> _fitBounds(LatLng origin, List<RouteSegment> segments) async {
+    if (segments.isEmpty) return;
     final controller = _controller ?? await _controllerCompleter.future;
 
     double minLat = origin.latitude;
     double maxLat = origin.latitude;
     double minLng = origin.longitude;
     double maxLng = origin.longitude;
-
     void include(LatLng p) {
       if (p.latitude < minLat) minLat = p.latitude;
       if (p.latitude > maxLat) maxLat = p.latitude;
@@ -379,9 +364,10 @@ class _MapScreenState extends State<MapScreen> {
       if (p.longitude > maxLng) maxLng = p.longitude;
     }
 
-    for (final r in ranked) {
-      include(LatLng(r.job.latitude, r.job.longitude));
-      for (final p in r.polylinePoints) {
+    for (final s in segments) {
+      include(s.fromLatLng);
+      include(s.toLatLng);
+      for (final p in s.polyline) {
         include(p);
       }
     }
@@ -393,91 +379,39 @@ class _MapScreenState extends State<MapScreen> {
     await controller.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
   }
 
-  final Map<String, BitmapDescriptor> _markerIconCache =
-      <String, BitmapDescriptor>{};
-
-  Future<BitmapDescriptor> _numberedMarkerIcon(
-    int number, {
-    bool isTop = false,
-  }) async {
-    final key = '${isTop ? 'top' : 'reg'}_$number';
-    final cached = _markerIconCache[key];
-    if (cached != null) return cached;
-
-    const size = 70.0;
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
-
-    final fillColor = isTop
-        ? AppColors.primary
-        : AppColors.primary.withValues(alpha: 0.92);
-    final strokeColor = Colors.white;
-
-    // Drop shadow
-    final shadowPaint = Paint()
-      ..color = Colors.black.withValues(alpha: 0.25)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
-    canvas.drawCircle(const Offset(size / 2, size / 2 + 3), 24, shadowPaint);
-
-    // Outer ring
-    final ringPaint = Paint()..color = strokeColor;
-    canvas.drawCircle(const Offset(size / 2, size / 2), 26, ringPaint);
-
-    // Filled circle
-    final fillPaint = Paint()..color = fillColor;
-    canvas.drawCircle(const Offset(size / 2, size / 2), 22, fillPaint);
-
-    // Pin tail
-    final path = Path()
-      ..moveTo(size / 2 - 7, size / 2 + 18)
-      ..lineTo(size / 2 + 7, size / 2 + 18)
-      ..lineTo(size / 2, size - 4)
-      ..close();
-    canvas.drawPath(path, fillPaint);
-
-    // Number
-    final textPainter = TextPainter(
-      text: TextSpan(
-        text: '$number',
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: isTop ? 22 : 20,
-          fontWeight: FontWeight.w800,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    textPainter.paint(
-      canvas,
-      Offset(
-        (size - textPainter.width) / 2,
-        (size - textPainter.height) / 2 - 2,
-      ),
-    );
-
-    final picture = recorder.endRecording();
-    final image = await picture.toImage(size.toInt(), size.toInt());
-    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-    final bytes = byteData!.buffer.asUint8List();
-    final descriptor = BitmapDescriptor.bytes(bytes);
-    _markerIconCache[key] = descriptor;
-    return descriptor;
+  void _onSegmentTap(int index) {
+    setState(() {
+      _focusedSegmentIndex = index;
+    });
+    if (index >= 0 && index < _segments.length) {
+      unawaited(_centerOnSegment(_segments[index]));
+    }
   }
 
-  Future<void> _focusJob(int rank) async {
-    final route = _rankedRoutes.firstWhere(
-      (r) => r.rank == rank,
-      orElse: () => _rankedRoutes.first,
-    );
-    setState(() {
-      _focusedRank = rank;
-      _jobPolylines = _buildPolylines(_rankedRoutes);
-    });
-    await _animateTo(LatLng(route.job.latitude, route.job.longitude), zoom: 16);
-    final controller = _controller;
-    if (controller != null) {
-      await controller.showMarkerInfoWindow(MarkerId('job_$rank'));
+  Future<void> _centerOnSegment(RouteSegment segment) async {
+    final controller = _controller ?? await _controllerCompleter.future;
+    final pts = segment.polyline.isNotEmpty
+        ? segment.polyline
+        : <LatLng>[segment.fromLatLng, segment.toLatLng];
+
+    double minLat = pts.first.latitude;
+    double maxLat = pts.first.latitude;
+    double minLng = pts.first.longitude;
+    double maxLng = pts.first.longitude;
+    for (final p in pts) {
+      if (p.latitude < minLat) minLat = p.latitude;
+      if (p.latitude > maxLat) maxLat = p.latitude;
+      if (p.longitude < minLng) minLng = p.longitude;
+      if (p.longitude > maxLng) maxLng = p.longitude;
     }
+
+    final bounds = LatLngBounds(
+      southwest: LatLng(minLat, minLng),
+      northeast: LatLng(maxLat, maxLng),
+    );
+    await controller.animateCamera(
+      CameraUpdate.newLatLngBounds(bounds, 100),
+    );
   }
 
   void _setPermissionMessage(String msg) {
@@ -723,15 +657,15 @@ class _MapScreenState extends State<MapScreen> {
             initialCameraPosition: _initialCameraPosition,
             mapType: _mapType,
             trafficEnabled: _trafficEnabled,
-            markers: {..._markers, ..._jobMarkers},
-            polylines: _jobPolylines,
+            markers: {..._markers, ..._taskMarkers},
+            polylines: _segmentPolylines,
             myLocationEnabled: _locationGranted,
             myLocationButtonEnabled: false,
             zoomControlsEnabled: false,
             compassEnabled: true,
             padding: EdgeInsets.only(
               top: viewPadding.top + 70,
-              bottom: _rankedRoutes.isEmpty ? 24 : 220,
+              bottom: _segments.isEmpty ? 24 : 240,
             ),
             onTap: (_) => FocusScope.of(context).unfocus(),
             onMapCreated: (controller) {
@@ -806,77 +740,32 @@ class _MapScreenState extends State<MapScreen> {
 
                 const SizedBox(height: 10),
 
-                _MapFloatingButton(
-                  icon: _isComputingJobs
-                      ? Icons.hourglass_top_rounded
-                      : Icons.auto_awesome_rounded,
-                  tooltip: 'Suggest top jobs',
-                  isActive: _rankedRoutes.isNotEmpty,
-                  onTap: _isComputingJobs ? () {} : _computeRankedJobs,
-                ),
+                if (widget.tasks.isNotEmpty)
+                  _MapFloatingButton(
+                    icon: _isBuildingRoute
+                        ? Icons.hourglass_top_rounded
+                        : Icons.alt_route_rounded,
+                    tooltip: 'Rebuild route',
+                    isActive: _segments.isNotEmpty,
+                    onTap: _isBuildingRoute ? () {} : _buildRouteForTasks,
+                  ),
               ],
             ),
           ),
 
-          if (_rankedRoutes.isNotEmpty)
+          if (widget.tasks.isNotEmpty)
             Positioned(
               left: 0,
               right: 0,
               bottom: 0,
-              child: _RankedJobsPanel(
-                routes: _rankedRoutes,
-                focusedRank: _focusedRank,
-                onTap: _focusJob,
-                onClose: () {
-                  setState(() {
-                    _rankedRoutes = <RankedJobRoute>[];
-                    _jobMarkers = <Marker>{};
-                    _jobPolylines = <Polyline>{};
-                    _focusedRank = null;
-                  });
-                },
-              ),
-            ),
-
-          if (_jobsErrorMessage != null && _rankedRoutes.isEmpty)
-            Positioned(
-              left: 16,
-              right: 16,
-              bottom: 24,
-              child: Material(
-                color: Colors.transparent,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 12,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.warning.withValues(alpha: 0.96),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.error_outline_rounded,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          _jobsErrorMessage!,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+              child: RouteSummaryPanel(
+                segments: _segments,
+                isLoading: _isBuildingRoute,
+                errorMessage: _routeErrorMessage,
+                focusedIndex: _focusedSegmentIndex,
+                onTapSegment: _onSegmentTap,
+                onDismissFocus: () =>
+                    setState(() => _focusedSegmentIndex = null),
               ),
             ),
 
@@ -1388,182 +1277,3 @@ class _MapFloatingButton extends StatelessWidget {
   }
 }
 
-class _RankedJobsPanel extends StatelessWidget {
-  const _RankedJobsPanel({
-    required this.routes,
-    required this.focusedRank,
-    required this.onTap,
-    required this.onClose,
-  });
-
-  final List<RankedJobRoute> routes;
-  final int? focusedRank;
-  final ValueChanged<int> onTap;
-  final VoidCallback onClose;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        margin: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.18),
-              blurRadius: 22,
-              offset: const Offset(0, 10),
-            ),
-          ],
-        ),
-        child: SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 6),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.primary.withValues(alpha: 0.10),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: const Text(
-                        'AI санал',
-                        style: TextStyle(
-                          color: AppColors.primary,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 11.5,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    const Expanded(
-                      child: Text(
-                        'Боломжит ажлын дараалал',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.textDark,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: onClose,
-                      tooltip: 'Хаах',
-                      icon: const Icon(
-                        Icons.close_rounded,
-                        color: AppColors.textMuted,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 220),
-                  child: ListView.separated(
-                    shrinkWrap: true,
-                    padding: EdgeInsets.zero,
-                    physics: const ClampingScrollPhysics(),
-                    itemCount: routes.length,
-                    separatorBuilder: (_, __) => Divider(
-                      height: 1,
-                      thickness: 1,
-                      color: Colors.black.withValues(alpha: 0.05),
-                    ),
-                    itemBuilder: (context, index) {
-                      final r = routes[index];
-                      final focused = r.rank == focusedRank;
-                      return InkWell(
-                        onTap: () => onTap(r.rank),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 32,
-                                height: 32,
-                                decoration: BoxDecoration(
-                                  color: r.rank == 1
-                                      ? AppColors.primary
-                                      : AppColors.primary
-                                          .withValues(alpha: 0.12),
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                alignment: Alignment.center,
-                                child: Text(
-                                  '${r.rank}',
-                                  style: TextStyle(
-                                    color: r.rank == 1
-                                        ? Colors.white
-                                        : AppColors.primary,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 14,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      r.job.name,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: focused
-                                            ? FontWeight.w800
-                                            : FontWeight.w700,
-                                        color: AppColors.textDark,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      '${r.distanceKm.toStringAsFixed(1)} км · ${r.durationMinutes} мин',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        color: AppColors.textMuted,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Icon(
-                                Icons.chevron_right_rounded,
-                                color: focused
-                                    ? AppColors.primary
-                                    : AppColors.textMuted,
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}

@@ -10,7 +10,6 @@ import '../../features/auth/presentation/screens/splash_screen.dart';
 import '../../features/home/presentation/screens/main_shell_screen.dart';
 import '../../features/home/presentation/screens/placeholder_screen.dart';
 import '../../features/map/presentation/screens/map_screen.dart';
-import '../../features/organizations/data/models/organization_model.dart';
 import '../../features/organizations/presentation/screens/organizations_screen.dart';
 import '../../features/tasks/presentation/screens/add_task_screen.dart';
 
@@ -76,12 +75,7 @@ class AppRouter {
         ),
         GoRoute(
           path: '/map',
-          builder: (_, state) {
-            final extra = state.extra;
-            return MapScreen(
-              focusOrganization: extra is Organization ? extra : null,
-            );
-          },
+          builder: (_, __) => const MapScreen(),
         ),
         GoRoute(
           path: '/reports',

@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import authRoutes from './routes/auth.routes';
 import mapsRoutes from './routes/maps.routes';
+import aiRoutes from './routes/ai.routes';
 import { errorHandler, notFoundHandler } from './middleware/error.middleware';
 import { generalLimiter } from './middleware/rateLimit.middleware';
 
@@ -20,6 +21,7 @@ export function createApp() {
 
   app.use('/api/auth', authRoutes);
   app.use('/api/maps', mapsRoutes);
+  app.use('/api/ai', aiRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

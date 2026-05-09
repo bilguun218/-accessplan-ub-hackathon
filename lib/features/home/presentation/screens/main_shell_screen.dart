@@ -7,8 +7,8 @@ import '../../../../core/constants/app_strings.dart';
 import '../../../../core/widgets/app_button.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../map/presentation/screens/map_screen.dart';
+import '../../../tasks/presentation/screens/add_task_screen.dart';
 import '../widgets/main_bottom_nav.dart';
-import 'home_screen.dart';
 import 'placeholder_screen.dart';
 
 class MainShellScreen extends StatefulWidget {
@@ -23,21 +23,10 @@ class _MainShellScreenState extends State<MainShellScreen> {
 
   void _go(int i) => setState(() => _index = i);
 
-  void _openAddTaskScreen() {
-    context.push('/tasks/add');
-  }
-
   @override
   Widget build(BuildContext context) {
     final pages = <Widget>[
-      HomeScreen(
-        onAddTask: _openAddTaskScreen,
-        onOpenPlanner: () => _go(1),
-        onOpenMap: () => _go(2),
-        onOpenReports: () => context.push('/reports'),
-        onOpenOrganizations: () => context.push('/organizations'),
-        onOpenProfile: () => _go(3),
-      ),
+      const AddTaskScreen(),
       const PlaceholderScreen(
         title: 'Төлөвлөгөө',
         message: 'Ажлын төлөвлөгөө модуль удахгүй нэмэгдэнэ.',
