@@ -65,22 +65,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
   PlaceDetailModel? _selectedStartLocation;
   String? _currentLocationText;
 
-  final List<_TaskItem> _tasks = [
-    const _TaskItem(
-      id: 1,
-      taskName: 'Bank account verification',
-      organization: 'Khan Bank',
-      selectedBranch: 'Khan Bank - Zaisan',
-      priority: TaskPriority.high,
-    ),
-    const _TaskItem(
-      id: 2,
-      taskName: 'Buy groceries',
-      organization: 'Emart',
-      selectedBranch: 'Emart - Khan-Uul',
-      priority: TaskPriority.medium,
-    ),
-  ];
+  final List<_TaskItem> _tasks = [];
 
   static const _organizationOptions = ['Khan Bank', 'Emart', 'CU'];
 
@@ -802,7 +787,10 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                       'Task List',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     SizedBox(height: 4),
                     Text(
