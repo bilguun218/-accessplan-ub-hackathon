@@ -340,25 +340,31 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
-                    Text(
-                      'Add New Task',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: const [
+                      Text(
+                        'Add New Task',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
-                    ),
-                    SizedBox(height: 4),
-                    Text(
-                      'Enter task details for smart route optimization.',
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        color: AppColors.textMuted,
+                      SizedBox(height: 4),
+                      Text(
+                        'Enter task details for smart route optimization.',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          color: AppColors.textMuted,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -426,12 +432,17 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
             if (hasMatch) ...[
               const SizedBox(height: 18),
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  const Text(
-                    'Nearby Branches',
-                    style: TextStyle(fontWeight: FontWeight.w600),
+                  const Expanded(
+                    child: Text(
+                      'Nearby Branches',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
                   ),
+                  const SizedBox(width: 8),
                   TextButton(
                     onPressed: _branchOptions.isEmpty
                         ? null
@@ -557,22 +568,29 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: const [
-                  Text(
-                    'Task List',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
-                  ),
-                  SizedBox(height: 4),
-                  Text(
-                    'Tasks added for optimization',
-                    style: TextStyle(color: AppColors.textMuted),
-                  ),
-                ],
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: const [
+                    Text(
+                      'Task List',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Tasks added for optimization',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: AppColors.textMuted),
+                    ),
+                  ],
+                ),
               ),
+              const SizedBox(width: 12),
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 14,
@@ -646,6 +664,8 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                             children: [
                               Text(
                                 task.taskName,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.w600,
@@ -654,6 +674,8 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                               const SizedBox(height: 6),
                               Text(
                                 task.organization,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w600,
                                   color: Color(0xFF374151),
@@ -663,6 +685,8 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                                 const SizedBox(height: 4),
                                 Text(
                                   task.selectedBranch,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
                                     color: _primaryBlue,
                                     fontSize: 12.5,
@@ -672,6 +696,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                             ],
                           ),
                         ),
+                        const SizedBox(width: 8),
                         Column(
                           children: [
                             Container(

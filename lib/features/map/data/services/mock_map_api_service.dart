@@ -3,7 +3,7 @@ import '../models/place_prediction_model.dart';
 
 class MockMapApiService {
   // Sample Ulaanbaatar locations
-  static const List<Map<String, dynamic>> _mockPlaces = [
+  static const List<Map<String, dynamic>> mockPlaces = [
     {
       'placeId': 'gmaps_0',
       'description': 'Ulaanbaatar Hotel, Ulaanbaatar',
@@ -3446,7 +3446,7 @@ class MockMapApiService {
     if (query.isEmpty) return [];
 
     // Filter mock places by search query
-    return _mockPlaces
+    return mockPlaces
         .where(
           (place) =>
               place['mainText'].toLowerCase().contains(query) ||
@@ -3468,9 +3468,9 @@ class MockMapApiService {
     // Simulate network delay
     await Future.delayed(const Duration(milliseconds: 300));
 
-    final place = _mockPlaces.firstWhere(
+    final place = mockPlaces.firstWhere(
       (p) => p['placeId'] == placeId,
-      orElse: () => _mockPlaces[0],
+      orElse: () => mockPlaces[0],
     );
 
     return PlaceDetailModel(

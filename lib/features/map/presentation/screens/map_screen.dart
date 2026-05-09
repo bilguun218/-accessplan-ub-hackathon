@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -6,12 +7,19 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../organizations/data/mock/mock_organizations.dart';
+import '../../../organizations/data/models/organization_model.dart';
 import '../../data/models/place_detail_model.dart';
 import '../../data/models/place_prediction_model.dart';
+import '../../data/models/ranked_job_route.dart';
+import '../../data/services/job_route_service.dart';
 import '../../data/services/map_api_service.dart';
 
 class MapScreen extends StatefulWidget {
-  const MapScreen({super.key});
+  const MapScreen({super.key, this.focusOrganization});
+
+  /// Open the map with this organization pre-selected: pin + driving route.
+  final Organization? focusOrganization;
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -29,17 +37,20 @@ class _MapScreenState extends State<MapScreen> {
   final FocusNode _searchFocus = FocusNode();
 
   final MapApiService _mapApiService = MapApiService();
+  final JobRouteService _routeService = JobRouteService();
 
   GoogleMapController? _controller;
   Timer? _searchDebounce;
 
   String? _permissionMessage;
   String? _errorMessage;
+  String? _jobsErrorMessage;
 
   bool _trafficEnabled = true;
   bool _locationGranted = false;
   bool _isSearching = false;
   bool _isLoadingPlace = false;
+  bool _isComputingJobs = false;
 
   MapType _mapType = MapType.normal;
 
@@ -48,6 +59,14 @@ class _MapScreenState extends State<MapScreen> {
   PlaceDetailModel? _selectedPlace;
 
   Set<Marker> _markers = <Marker>{};
+  Set<Marker> _jobMarkers = <Marker>{};
+  Set<Polyline> _jobPolylines = <Polyline>{};
+
+  List<RankedJobRoute> _rankedRoutes = <RankedJobRoute>[];
+  int? _focusedRank;
+  LatLng? _currentLatLng;
+
+  static const int kMaxRoutesToShow = 5;
 
   late CameraPosition _initialCameraPosition;
   bool _locationLoaded = false;
@@ -123,7 +142,6 @@ class _MapScreenState extends State<MapScreen> {
 
       if (!mounted) return;
 
-      // Update initial camera position if this is the first load
       if (!_locationLoaded) {
         _initialCameraPosition = CameraPosition(
           target: currentLatLng,
@@ -133,6 +151,7 @@ class _MapScreenState extends State<MapScreen> {
       }
 
       setState(() {
+        _currentLatLng = currentLatLng;
         _markers = {
           Marker(
             markerId: const MarkerId('current_location'),
@@ -146,8 +165,318 @@ class _MapScreenState extends State<MapScreen> {
       });
 
       await _animateTo(currentLatLng, zoom: 16);
+      // Хэрэв тодорхой organization-той орж ирсэн бол түүний route-ыг,
+      // үгүй бол хамгийн боломжит ажлуудыг харуулна.
+      if (widget.focusOrganization != null) {
+        unawaited(_focusOrganizationRoute(widget.focusOrganization!));
+      } else if (_rankedRoutes.isEmpty && !_isComputingJobs) {
+        unawaited(_computeRankedJobs());
+      }
     } catch (e) {
       debugPrint('Current location error: $e');
+    }
+  }
+
+  Future<void> _focusOrganizationRoute(Organization org) async {
+    final origin = _currentLatLng ?? const LatLng(47.918873, 106.917701);
+    final destination = LatLng(org.latitude, org.longitude);
+
+    setState(() {
+      _isComputingJobs = true;
+      _jobsErrorMessage = null;
+    });
+
+    // 1. Marker-уудыг шууд харуулна (Haversine + шулуун зам).
+    final straightDistance = haversineMeters(
+      origin.latitude,
+      origin.longitude,
+      org.latitude,
+      org.longitude,
+    ).round();
+
+    final baseline = RankedJobRoute(
+      job: org,
+      rank: 1,
+      distanceMeters: straightDistance,
+      durationSeconds: (straightDistance * 0.12).round(),
+      score: 0,
+      polylinePoints: <LatLng>[origin, destination],
+    );
+
+    var routes = [baseline];
+    var markers = await _buildJobMarkers(routes);
+    var polylines = _buildPolylines(routes);
+
+    if (!mounted) return;
+    setState(() {
+      _rankedRoutes = routes;
+      _jobMarkers = markers;
+      _jobPolylines = polylines;
+    });
+    await _fitBoundsToRoutes(origin, routes);
+
+    // 2. OSRM-аар жинхэнэ замын дагуу зам татна (үнэгүй, key-гүй).
+    final fetched = await _routeService.fetchRouteFor(
+      origin: origin,
+      baseline: baseline,
+    );
+
+    if (!mounted) return;
+
+    if (fetched != null) {
+      routes = [fetched];
+      markers = await _buildJobMarkers(routes);
+      polylines = _buildPolylines(routes);
+      setState(() {
+        _rankedRoutes = routes;
+        _jobMarkers = markers;
+        _jobPolylines = polylines;
+        _isComputingJobs = false;
+      });
+      await _fitBoundsToRoutes(origin, routes);
+    } else {
+      setState(() {
+        _isComputingJobs = false;
+        _jobsErrorMessage =
+            'Замын мэдээлэл татаж чадсангүй. Шулуун зай харуулав.';
+      });
+    }
+  }
+
+  Future<void> _computeRankedJobs() async {
+    // Байршил байхгүй бол УБ төвийг origin болгоно (marker заавал гарна).
+    final origin = _currentLatLng ?? const LatLng(47.918873, 106.917701);
+
+    setState(() {
+      _isComputingJobs = true;
+      _jobsErrorMessage = null;
+    });
+
+    try {
+      // 1. Эхлээд Haversine-аар ranking хийнэ — API хүлээхгүй.
+      final initial = _routeService.rankJobsLocal(
+        origin: origin,
+        jobs: MockOrganizations.all,
+        limit: kMaxRoutesToShow,
+      );
+
+      if (!mounted) return;
+
+      // 2. Marker-уудыг шууд харуулна (polyline хоосон).
+      final markers = await _buildJobMarkers(initial);
+      setState(() {
+        _rankedRoutes = initial;
+        _jobMarkers = markers;
+        _jobPolylines = <Polyline>{};
+      });
+
+      await _fitBoundsToRoutes(origin, initial);
+
+      // 3. Дараа нь Directions API-р polyline + бодит distance/duration татна.
+      final updated = <RankedJobRoute>[];
+      for (final base in initial) {
+        final fetched = await _routeService.fetchRouteFor(
+          origin: origin,
+          baseline: base,
+        );
+        updated.add(fetched ?? base);
+      }
+
+      if (!mounted) return;
+
+      // 4. Re-rank score-оор (API-аас бодит дата ирсэн тохиолдолд).
+      updated.sort((a, b) => a.score.compareTo(b.score));
+      final reranked = [
+        for (var i = 0; i < updated.length; i++)
+          updated[i].copyWith(rank: i + 1),
+      ];
+
+      // Rank өөрчлөгдсөн бол marker-уудыг дахин зурна.
+      final newMarkers = await _buildJobMarkers(reranked);
+      final newPolylines = _buildPolylines(reranked);
+
+      if (!mounted) return;
+
+      setState(() {
+        _rankedRoutes = reranked;
+        _jobMarkers = newMarkers;
+        _jobPolylines = newPolylines;
+        _isComputingJobs = false;
+      });
+
+      await _fitBoundsToRoutes(origin, reranked);
+    } catch (e) {
+      debugPrint('Rank jobs error: $e');
+      if (!mounted) return;
+      setState(() {
+        _isComputingJobs = false;
+        _jobsErrorMessage = 'Маршрут татаж чадсангүй.';
+      });
+    }
+  }
+
+  Future<Set<Marker>> _buildJobMarkers(List<RankedJobRoute> ranked) async {
+    final markers = <Marker>{};
+    for (final r in ranked) {
+      final icon = await _numberedMarkerIcon(r.rank, isTop: r.rank == 1);
+      markers.add(
+        Marker(
+          markerId: MarkerId('job_${r.rank}'),
+          position: LatLng(r.job.latitude, r.job.longitude),
+          icon: icon,
+          infoWindow: InfoWindow(
+            title: '${r.rank}. ${r.job.name}',
+            snippet:
+                '${r.distanceKm.toStringAsFixed(1)} км · ${r.durationMinutes} мин',
+          ),
+          onTap: () => _focusJob(r.rank),
+        ),
+      );
+    }
+    return markers;
+  }
+
+  Set<Polyline> _buildPolylines(List<RankedJobRoute> ranked) {
+    final polylines = <Polyline>{};
+    for (final r in ranked) {
+      if (r.polylinePoints.isEmpty) continue;
+      final isTop = r.rank == 1;
+      final isFocused = _focusedRank == r.rank;
+      polylines.add(
+        Polyline(
+          polylineId: PolylineId('route_${r.rank}'),
+          points: r.polylinePoints,
+          width: isFocused ? 8 : (isTop ? 7 : 4),
+          color: isTop
+              ? AppColors.primary
+              : AppColors.primary.withValues(alpha: isFocused ? 0.95 : 0.45),
+          startCap: Cap.roundCap,
+          endCap: Cap.roundCap,
+          jointType: JointType.round,
+          zIndex: isTop ? 3 : (isFocused ? 2 : 1),
+        ),
+      );
+    }
+    return polylines;
+  }
+
+  Future<void> _fitBoundsToRoutes(
+    LatLng origin,
+    List<RankedJobRoute> ranked,
+  ) async {
+    if (ranked.isEmpty) return;
+    final controller = _controller ?? await _controllerCompleter.future;
+
+    double minLat = origin.latitude;
+    double maxLat = origin.latitude;
+    double minLng = origin.longitude;
+    double maxLng = origin.longitude;
+
+    void include(LatLng p) {
+      if (p.latitude < minLat) minLat = p.latitude;
+      if (p.latitude > maxLat) maxLat = p.latitude;
+      if (p.longitude < minLng) minLng = p.longitude;
+      if (p.longitude > maxLng) maxLng = p.longitude;
+    }
+
+    for (final r in ranked) {
+      include(LatLng(r.job.latitude, r.job.longitude));
+      for (final p in r.polylinePoints) {
+        include(p);
+      }
+    }
+
+    final bounds = LatLngBounds(
+      southwest: LatLng(minLat, minLng),
+      northeast: LatLng(maxLat, maxLng),
+    );
+    await controller.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
+  }
+
+  final Map<String, BitmapDescriptor> _markerIconCache =
+      <String, BitmapDescriptor>{};
+
+  Future<BitmapDescriptor> _numberedMarkerIcon(
+    int number, {
+    bool isTop = false,
+  }) async {
+    final key = '${isTop ? 'top' : 'reg'}_$number';
+    final cached = _markerIconCache[key];
+    if (cached != null) return cached;
+
+    const size = 70.0;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+
+    final fillColor = isTop
+        ? AppColors.primary
+        : AppColors.primary.withValues(alpha: 0.92);
+    final strokeColor = Colors.white;
+
+    // Drop shadow
+    final shadowPaint = Paint()
+      ..color = Colors.black.withValues(alpha: 0.25)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+    canvas.drawCircle(const Offset(size / 2, size / 2 + 3), 24, shadowPaint);
+
+    // Outer ring
+    final ringPaint = Paint()..color = strokeColor;
+    canvas.drawCircle(const Offset(size / 2, size / 2), 26, ringPaint);
+
+    // Filled circle
+    final fillPaint = Paint()..color = fillColor;
+    canvas.drawCircle(const Offset(size / 2, size / 2), 22, fillPaint);
+
+    // Pin tail
+    final path = Path()
+      ..moveTo(size / 2 - 7, size / 2 + 18)
+      ..lineTo(size / 2 + 7, size / 2 + 18)
+      ..lineTo(size / 2, size - 4)
+      ..close();
+    canvas.drawPath(path, fillPaint);
+
+    // Number
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: '$number',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: isTop ? 22 : 20,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    textPainter.paint(
+      canvas,
+      Offset(
+        (size - textPainter.width) / 2,
+        (size - textPainter.height) / 2 - 2,
+      ),
+    );
+
+    final picture = recorder.endRecording();
+    final image = await picture.toImage(size.toInt(), size.toInt());
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    final bytes = byteData!.buffer.asUint8List();
+    final descriptor = BitmapDescriptor.bytes(bytes);
+    _markerIconCache[key] = descriptor;
+    return descriptor;
+  }
+
+  Future<void> _focusJob(int rank) async {
+    final route = _rankedRoutes.firstWhere(
+      (r) => r.rank == rank,
+      orElse: () => _rankedRoutes.first,
+    );
+    setState(() {
+      _focusedRank = rank;
+      _jobPolylines = _buildPolylines(_rankedRoutes);
+    });
+    await _animateTo(LatLng(route.job.latitude, route.job.longitude), zoom: 16);
+    final controller = _controller;
+    if (controller != null) {
+      await controller.showMarkerInfoWindow(MarkerId('job_$rank'));
     }
   }
 
@@ -190,12 +519,40 @@ class _MapScreenState extends State<MapScreen> {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.12),
+                blurRadius: 20,
+                offset: const Offset(0, 8),
+              ),
+            ],
           ),
           child: SafeArea(
             top: false,
             child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'Map Type',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.textDark,
+                  ),
+                ),
+                const SizedBox(height: 12),
                 _MapTypeOption(
                   title: 'Normal',
                   subtitle: 'Standard map',
@@ -208,7 +565,7 @@ class _MapScreenState extends State<MapScreen> {
                 ),
                 _MapTypeOption(
                   title: 'Satellite',
-                  subtitle: 'Satellite map',
+                  subtitle: 'Satellite imagery',
                   icon: Icons.satellite_alt_rounded,
                   isSelected: _mapType == MapType.satellite,
                   onTap: () {
@@ -218,7 +575,7 @@ class _MapScreenState extends State<MapScreen> {
                 ),
                 _MapTypeOption(
                   title: 'Hybrid',
-                  subtitle: 'Hybrid map',
+                  subtitle: 'Satellite + labels',
                   icon: Icons.layers_rounded,
                   isSelected: _mapType == MapType.hybrid,
                   onTap: () {
@@ -366,11 +723,16 @@ class _MapScreenState extends State<MapScreen> {
             initialCameraPosition: _initialCameraPosition,
             mapType: _mapType,
             trafficEnabled: _trafficEnabled,
-            markers: _markers,
+            markers: {..._markers, ..._jobMarkers},
+            polylines: _jobPolylines,
             myLocationEnabled: _locationGranted,
             myLocationButtonEnabled: false,
             zoomControlsEnabled: false,
             compassEnabled: true,
+            padding: EdgeInsets.only(
+              top: viewPadding.top + 70,
+              bottom: _rankedRoutes.isEmpty ? 24 : 220,
+            ),
             onTap: (_) => FocusScope.of(context).unfocus(),
             onMapCreated: (controller) {
               _controller = controller;
@@ -441,32 +803,128 @@ class _MapScreenState extends State<MapScreen> {
                   isActive: _mapType != MapType.normal,
                   onTap: _showMapTypeSheet,
                 ),
+
+                const SizedBox(height: 10),
+
+                _MapFloatingButton(
+                  icon: _isComputingJobs
+                      ? Icons.hourglass_top_rounded
+                      : Icons.auto_awesome_rounded,
+                  tooltip: 'Suggest top jobs',
+                  isActive: _rankedRoutes.isNotEmpty,
+                  onTap: _isComputingJobs ? () {} : _computeRankedJobs,
+                ),
               ],
             ),
           ),
+
+          if (_rankedRoutes.isNotEmpty)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: _RankedJobsPanel(
+                routes: _rankedRoutes,
+                focusedRank: _focusedRank,
+                onTap: _focusJob,
+                onClose: () {
+                  setState(() {
+                    _rankedRoutes = <RankedJobRoute>[];
+                    _jobMarkers = <Marker>{};
+                    _jobPolylines = <Polyline>{};
+                    _focusedRank = null;
+                  });
+                },
+              ),
+            ),
+
+          if (_jobsErrorMessage != null && _rankedRoutes.isEmpty)
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 24,
+              child: Material(
+                color: Colors.transparent,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.warning.withValues(alpha: 0.96),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.error_outline_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          _jobsErrorMessage!,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
 
           if (_permissionMessage != null)
             Positioned(
               top: viewPadding.top + 70,
               left: 16,
               right: 16,
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.red,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.location_off, color: Colors.white),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _permissionMessage!,
-                        style: const TextStyle(color: Colors.white),
+              child: Material(
+                color: Colors.transparent,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.warning.withValues(alpha: 0.96),
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.12),
+                        blurRadius: 14,
+                        offset: const Offset(0, 6),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.location_off_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          _permissionMessage!,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -493,12 +951,81 @@ class _MapTypeOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      leading: Icon(icon),
-      title: Text(title),
-      subtitle: Text(subtitle),
-      trailing: isSelected ? const Icon(Icons.check, color: Colors.blue) : null,
-      onTap: onTap,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? AppColors.primary.withValues(alpha: 0.08)
+                : Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: isSelected
+                  ? AppColors.primary
+                  : Colors.black.withValues(alpha: 0.06),
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? AppColors.primary
+                      : AppColors.primary.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(
+                  icon,
+                  color: isSelected ? Colors.white : AppColors.primary,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.textDark,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        color: AppColors.textMuted,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (isSelected)
+                const Icon(
+                  Icons.check_circle_rounded,
+                  color: AppColors.primary,
+                  size: 22,
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -520,41 +1047,70 @@ class _MapSearchInput extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.12),
+              blurRadius: 18,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: TextField(
+          controller: controller,
+          focusNode: focusNode,
+          onChanged: onChanged,
+          textInputAction: TextInputAction.search,
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textDark,
           ),
-        ],
-      ),
-      child: TextField(
-        controller: controller,
-        focusNode: focusNode,
-        onChanged: onChanged,
-        decoration: InputDecoration(
-          hintText: 'Search places...',
-          prefixIcon: const Icon(Icons.location_on),
-          suffixIcon: isLoading
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: Padding(
-                    padding: EdgeInsets.all(12),
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                )
-              : controller.text.isNotEmpty
-              ? IconButton(icon: const Icon(Icons.clear), onPressed: onClear)
-              : null,
-          border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 12,
+          decoration: InputDecoration(
+            hintText: 'Search places...',
+            hintStyle: const TextStyle(
+              color: AppColors.textMuted,
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+            ),
+            prefixIcon: const Icon(
+              Icons.search_rounded,
+              color: AppColors.textMuted,
+              size: 22,
+            ),
+            suffixIcon: isLoading
+                ? const Padding(
+                    padding: EdgeInsets.all(14),
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  )
+                : controller.text.isNotEmpty
+                ? IconButton(
+                    icon: const Icon(
+                      Icons.close_rounded,
+                      color: AppColors.textMuted,
+                    ),
+                    onPressed: onClear,
+                    tooltip: 'Clear',
+                  )
+                : null,
+            border: InputBorder.none,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 14,
+            ),
           ),
         ),
       ),
@@ -577,77 +1133,172 @@ class _SuggestionPanel extends StatelessWidget {
     required this.onTap,
   });
 
+  BoxDecoration _panelDecoration() => BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.12),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      );
+
+  Widget _infoRow({
+    required IconData icon,
+    required String text,
+    Color? color,
+  }) {
+    final c = color ?? AppColors.textMuted;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: c),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13.5,
+                fontWeight: FontWeight.w600,
+                color: c,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (isLoading && suggestions.isEmpty) {
-      return Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: const Padding(
-          padding: EdgeInsets.all(16),
-          child: CircularProgressIndicator(),
+      return Material(
+        color: Colors.transparent,
+        child: Container(
+          decoration: _panelDecoration(),
+          child: _infoRow(
+            icon: Icons.search_rounded,
+            text: 'Searching...',
+          ),
         ),
       );
     }
 
     if (errorMessage != null) {
-      return Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Text(errorMessage!, style: const TextStyle(color: Colors.red)),
+      return Material(
+        color: Colors.transparent,
+        child: Container(
+          decoration: _panelDecoration(),
+          child: _infoRow(
+            icon: Icons.error_outline_rounded,
+            text: errorMessage!,
+            color: AppColors.warning,
+          ),
         ),
       );
     }
 
     if (suggestions.isEmpty && !isLoading && hasQuery) {
-      return Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: const Padding(
-          padding: EdgeInsets.all(16),
-          child: Text('No results found'),
+      return Material(
+        color: Colors.transparent,
+        child: Container(
+          decoration: _panelDecoration(),
+          child: _infoRow(
+            icon: Icons.location_off_rounded,
+            text: 'No results found',
+          ),
         ),
       );
     }
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 300),
-        child: ListView.builder(
-          shrinkWrap: true,
-          itemCount: suggestions.length,
-          itemBuilder: (context, index) {
-            final suggestion = suggestions[index];
-            return ListTile(
-              leading: const Icon(Icons.location_on_outlined),
-              title: Text(suggestion.mainText),
-              subtitle: Text(
-                suggestion.secondaryText,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        decoration: _panelDecoration(),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 320),
+            child: ListView.separated(
+              shrinkWrap: true,
+              padding: EdgeInsets.zero,
+              physics: const ClampingScrollPhysics(),
+              itemCount: suggestions.length,
+              separatorBuilder: (_, __) => Divider(
+                height: 1,
+                thickness: 1,
+                color: Colors.black.withValues(alpha: 0.05),
               ),
-              onTap: () => onTap(suggestion),
-            );
-          },
+              itemBuilder: (context, index) {
+                final suggestion = suggestions[index];
+                return InkWell(
+                  onTap: () => onTap(suggestion),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 34,
+                          height: 34,
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withValues(alpha: 0.10),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(
+                            Icons.location_on_rounded,
+                            color: AppColors.primary,
+                            size: 20,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                suggestion.mainText.isNotEmpty
+                                    ? suggestion.mainText
+                                    : suggestion.description,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 14.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.textDark,
+                                ),
+                              ),
+                              if (suggestion.secondaryText.isNotEmpty) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  suggestion.secondaryText,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 12.5,
+                                    color: AppColors.textMuted,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
         ),
       ),
     );
@@ -669,13 +1320,220 @@ class _MapFloatingButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FloatingActionButton(
-      mini: true,
-      backgroundColor: isActive ? Colors.blue : Colors.white,
-      foregroundColor: isActive ? Colors.white : Colors.blue,
-      tooltip: tooltip,
-      onPressed: onTap,
-      child: Icon(icon),
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: isActive ? AppColors.primary : Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.13),
+                  blurRadius: 14,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+              border: Border.all(
+                color: isActive
+                    ? AppColors.primary
+                    : Colors.black.withValues(alpha: 0.06),
+              ),
+            ),
+            child: Icon(
+              icon,
+              color: isActive ? Colors.white : AppColors.textDark,
+              size: 22,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RankedJobsPanel extends StatelessWidget {
+  const _RankedJobsPanel({
+    required this.routes,
+    required this.focusedRank,
+    required this.onTap,
+    required this.onClose,
+  });
+
+  final List<RankedJobRoute> routes;
+  final int? focusedRank;
+  final ValueChanged<int> onTap;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        margin: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.18),
+              blurRadius: 22,
+              offset: const Offset(0, 10),
+            ),
+          ],
+        ),
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: const Text(
+                        'AI санал',
+                        style: TextStyle(
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 11.5,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'Боломжит ажлын дараалал',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.textDark,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: onClose,
+                      tooltip: 'Хаах',
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 220),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    padding: EdgeInsets.zero,
+                    physics: const ClampingScrollPhysics(),
+                    itemCount: routes.length,
+                    separatorBuilder: (_, __) => Divider(
+                      height: 1,
+                      thickness: 1,
+                      color: Colors.black.withValues(alpha: 0.05),
+                    ),
+                    itemBuilder: (context, index) {
+                      final r = routes[index];
+                      final focused = r.rank == focusedRank;
+                      return InkWell(
+                        onTap: () => onTap(r.rank),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color: r.rank == 1
+                                      ? AppColors.primary
+                                      : AppColors.primary
+                                          .withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                alignment: Alignment.center,
+                                child: Text(
+                                  '${r.rank}',
+                                  style: TextStyle(
+                                    color: r.rank == 1
+                                        ? Colors.white
+                                        : AppColors.primary,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      r.job.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: focused
+                                            ? FontWeight.w800
+                                            : FontWeight.w700,
+                                        color: AppColors.textDark,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      '${r.distanceKm.toStringAsFixed(1)} км · ${r.durationMinutes} мин',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        color: AppColors.textMuted,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Icon(
+                                Icons.chevron_right_rounded,
+                                color: focused
+                                    ? AppColors.primary
+                                    : AppColors.textMuted,
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

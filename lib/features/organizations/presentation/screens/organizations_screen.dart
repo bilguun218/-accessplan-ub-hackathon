@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../data/mock/mock_organizations.dart';
+import '../../data/models/organization_model.dart';
 
 class OrganizationsScreen extends StatefulWidget {
   const OrganizationsScreen({super.key});
@@ -23,10 +25,10 @@ class _OrganizationsScreenState extends State<OrganizationsScreen> {
     super.dispose();
   }
 
-  List<_Business> get _filteredBusinesses {
+  List<Organization> get _filteredBusinesses {
     final query = _query.trim().toLowerCase();
 
-    var items = _mockBusinesses.where((business) {
+    var items = MockOrganizations.all.where((business) {
       final matchesCategory =
           _selectedCategory == 'Бүгд' || business.category == _selectedCategory;
       if (!matchesCategory) return false;
@@ -60,7 +62,7 @@ class _OrganizationsScreenState extends State<OrganizationsScreen> {
     return items;
   }
 
-  void _showBusinessDetails(_Business business) {
+  void _showBusinessDetails(Organization business) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -176,7 +178,7 @@ class _OrganizationsScreenState extends State<OrganizationsScreen> {
                         child: ElevatedButton.icon(
                           onPressed: () {
                             Navigator.pop(context);
-                            context.push('/map');
+                            context.push('/map', extra: business);
                           },
                           icon: const Icon(Icons.map_outlined, size: 18),
                           label: const Text('Газрын зураг'),
@@ -317,10 +319,10 @@ class _OrganizationsScreenState extends State<OrganizationsScreen> {
               child: ListView.separated(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 scrollDirection: Axis.horizontal,
-                itemCount: _categories.length,
+                itemCount: MockOrganizations.categories.length,
                 separatorBuilder: (_, __) => const SizedBox(width: 8),
                 itemBuilder: (context, index) {
-                  final category = _categories[index];
+                  final category = MockOrganizations.categories[index];
                   final selected = category == _selectedCategory;
                   return ChoiceChip(
                     label: Text(category),
@@ -419,237 +421,6 @@ class _OrganizationsScreenState extends State<OrganizationsScreen> {
 
 enum _SortOption { best, rating, distance }
 
-class _Business {
-  final String name;
-  final String category;
-  final double rating;
-  final int reviewCount;
-  final double distanceKm;
-  final bool openNow;
-  final String price;
-  final String address;
-  final String phone;
-  final String hours;
-  final List<String> tags;
-  final List<String> accessibility;
-  final List<_Review> reviews;
-
-  const _Business({
-    required this.name,
-    required this.category,
-    required this.rating,
-    required this.reviewCount,
-    required this.distanceKm,
-    required this.openNow,
-    required this.price,
-    required this.address,
-    required this.phone,
-    required this.hours,
-    required this.tags,
-    required this.accessibility,
-    required this.reviews,
-  });
-}
-
-class _Review {
-  final String author;
-  final double rating;
-  final String text;
-  final String date;
-
-  const _Review({
-    required this.author,
-    required this.rating,
-    required this.text,
-    required this.date,
-  });
-}
-
-const _categories = <String>[
-  'Бүгд',
-  'Кафе',
-  'Ресторан',
-  'Эмнэлэг',
-  'Банк',
-  'Дэлгүүр',
-  'Албан газар',
-  'Сервис',
-];
-
-const _mockBusinesses = <_Business>[
-  _Business(
-    name: 'Blue Sky Lounge',
-    category: 'Ресторан',
-    rating: 4.6,
-    reviewCount: 245,
-    distanceKm: 1.2,
-    openNow: true,
-    price: '₮₮₮',
-    address: 'Сүхбаатар дүүрэг, Олимпын гудамж 19',
-    phone: '+976 7012 8899',
-    hours: 'Өнөөдөр 10:00-23:00',
-    tags: ['Хотын төв', 'Хотын панорам', 'Үдийн хоол'],
-    accessibility: ['Тэргэнцэрт ээлтэй орц', 'Лифттэй', 'Хүүхдийн өрөө'],
-    reviews: [
-      _Review(
-        author: 'Энхтүвшин',
-        rating: 4.5,
-        text: 'Харагдах орчин гоё, үйлчилгээ хурдан. Үнэ арай өндөр.',
-        date: '2026-04-28',
-      ),
-      _Review(
-        author: 'Саруул',
-        rating: 4.8,
-        text: 'Орц, ариун цэврийн өрөө тэргэнцэрт ээлтэй байлаа.',
-        date: '2026-04-15',
-      ),
-    ],
-  ),
-  _Business(
-    name: 'Green Clinic',
-    category: 'Эмнэлэг',
-    rating: 4.3,
-    reviewCount: 132,
-    distanceKm: 2.5,
-    openNow: true,
-    price: '₮₮',
-    address: 'Баянзүрх дүүрэг, 13-р хороо, Амгалан',
-    phone: '+976 7509 1122',
-    hours: 'Өнөөдөр 09:00-20:00',
-    tags: ['Эмчийн цаг', 'Лаборатори', 'Яаралтай'],
-    accessibility: [
-      'Өндөрлөг багатай орц',
-      'Тэргэнцэрт ээлтэй ариун цэврийн өрөө',
-      'Харааны тэмдэглэгээтэй',
-    ],
-    reviews: [
-      _Review(
-        author: 'Бат-Эрдэнэ',
-        rating: 4.0,
-        text: 'Эмч нар туршлагатай. Хүлээлт бага зэрэг удаан.',
-        date: '2026-04-20',
-      ),
-      _Review(
-        author: 'Дөлгөөн',
-        rating: 4.6,
-        text: 'Хүүхдийн өрөө, орчин цэвэрхэн.',
-        date: '2026-04-10',
-      ),
-    ],
-  ),
-  _Business(
-    name: 'City Bank Premium',
-    category: 'Банк',
-    rating: 4.1,
-    reviewCount: 98,
-    distanceKm: 0.8,
-    openNow: false,
-    price: '₮₮',
-    address: 'Чингэлтэй дүүрэг, Энхтайваны өргөн чөлөө',
-    phone: '+976 1800 1917',
-    hours: 'Даваа-Баасан 09:00-18:00',
-    tags: ['VIP үйлчилгээ', 'QR үйлчилгээ', 'Нээлттэй танхим'],
-    accessibility: ['Тэргэнцэрт ээлтэй орц', 'Хүлээлгийн бүс'],
-    reviews: [
-      _Review(
-        author: 'Ганболд',
-        rating: 3.9,
-        text: 'Кассны үйлчилгээ хурдан, харин зогсоол цөөн.',
-        date: '2026-04-12',
-      ),
-      _Review(
-        author: 'Болор',
-        rating: 4.2,
-        text: 'Менежерүүд найрсаг, зөвлөгөө сайн өгсөн.',
-        date: '2026-04-05',
-      ),
-    ],
-  ),
-  _Business(
-    name: 'Nomad Coffee Roasters',
-    category: 'Кафе',
-    rating: 4.7,
-    reviewCount: 310,
-    distanceKm: 1.6,
-    openNow: true,
-    price: '₮₮',
-    address: 'Сүхбаатар дүүрэг, 1-р хороо, Сөүлийн гудамж',
-    phone: '+976 7011 6677',
-    hours: 'Өнөөдөр 08:00-22:00',
-    tags: ['Wi-Fi', 'Террас', 'Тогтвортой кофе'],
-    accessibility: ['Тэргэнцэрт ээлтэй орц', 'Тухтай сууц'],
-    reviews: [
-      _Review(
-        author: 'Сайнбаяр',
-        rating: 5.0,
-        text: 'Кофены үнэр гайхалтай, үйлчилгээ хурдан.',
-        date: '2026-05-02',
-      ),
-      _Review(
-        author: 'Мөнх-Эрдэнэ',
-        rating: 4.6,
-        text: 'Илүү олон суудалтай байвал сайн санагдсан.',
-        date: '2026-04-18',
-      ),
-    ],
-  ),
-  _Business(
-    name: 'Ulaanbaatar Service Hub',
-    category: 'Албан газар',
-    rating: 4.0,
-    reviewCount: 76,
-    distanceKm: 3.1,
-    openNow: true,
-    price: '₮',
-    address: 'Баянгол дүүрэг, 4-р хороо, Нарны зам',
-    phone: '+976 11 333333',
-    hours: 'Өнөөдөр 09:00-18:30',
-    tags: ['Нэг цэгийн үйлчилгээ', 'Цахим үйлчилгээ'],
-    accessibility: ['Лифттэй', 'Хүлээлгийн бүс', 'Тэргэнцэрт ээлтэй орц'],
-    reviews: [
-      _Review(
-        author: 'Тэмүүлэн',
-        rating: 3.8,
-        text: 'Цахим үйлчилгээг сайжруулах хэрэгтэй байна.',
-        date: '2026-04-22',
-      ),
-      _Review(
-        author: 'Ариунболд',
-        rating: 4.1,
-        text: 'Хүлээлгийн хугацаа богино, мэдээлэл ойлгомжтой.',
-        date: '2026-04-01',
-      ),
-    ],
-  ),
-  _Business(
-    name: 'Fresh Mart Plus',
-    category: 'Дэлгүүр',
-    rating: 4.4,
-    reviewCount: 188,
-    distanceKm: 2.0,
-    openNow: true,
-    price: '₮₮',
-    address: 'Хан-Уул дүүрэг, 15-р хороо, Наадамчдын гудамж',
-    phone: '+976 7555 4433',
-    hours: 'Өнөөдөр 09:00-23:00',
-    tags: ['Хүргэлт', 'Органик бүтээгдэхүүн'],
-    accessibility: ['Тэргэнцэрт ээлтэй орц', 'Хүүхдийн тэргэнцэр'],
-    reviews: [
-      _Review(
-        author: 'Отгон',
-        rating: 4.2,
-        text: 'Бүтээгдэхүүний сонголт их, үнийн түвшин боломжийн.',
-        date: '2026-04-30',
-      ),
-      _Review(
-        author: 'Гэрэл',
-        rating: 4.6,
-        text: 'Хүргэлтийн үйлчилгээ хурдан байсан.',
-        date: '2026-04-11',
-      ),
-    ],
-  ),
-];
 
 class _SearchField extends StatelessWidget {
   const _SearchField({
@@ -758,7 +529,7 @@ class _SortChip extends StatelessWidget {
 class _BusinessCard extends StatelessWidget {
   const _BusinessCard({required this.business, required this.onTap});
 
-  final _Business business;
+  final Organization business;
   final VoidCallback onTap;
 
   @override
@@ -1003,7 +774,7 @@ class _InfoRow extends StatelessWidget {
 class _ReviewTile extends StatelessWidget {
   const _ReviewTile({required this.review});
 
-  final _Review review;
+  final OrganizationReview review;
 
   @override
   Widget build(BuildContext context) {
