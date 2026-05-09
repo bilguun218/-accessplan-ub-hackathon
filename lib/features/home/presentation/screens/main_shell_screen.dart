@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -7,6 +9,7 @@ import '../../../../core/constants/app_strings.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../map/presentation/screens/map_screen.dart';
 import '../../../tasks/data/models/standard_task.dart';
+import '../../../tasks/data/services/user_task_progress_service.dart';
 import '../../../tasks/presentation/screens/add_task_screen.dart';
 import '../widgets/main_bottom_nav.dart';
 
@@ -20,15 +23,34 @@ class MainShellScreen extends StatefulWidget {
 class _MainShellScreenState extends State<MainShellScreen> {
   int _index = 0;
   final List<StandardTask> _recentTasks = <StandardTask>[];
+  final List<StandardTask> _mapTasks = <StandardTask>[];
   final List<StandardTask> _savedTasks = <StandardTask>[];
   final List<StandardTask> _completedTasks = <StandardTask>[];
   final Set<String> _savedTaskIds = <String>{};
   final Set<String> _completedTaskIds = <String>{};
+  final Set<String> _claimedRewardIds = <String>{};
   final Map<String, DateTime> _savedAtById = <String, DateTime>{};
   final Map<String, DateTime> _completedAtById = <String, DateTime>{};
   final Map<String, String> _taskOwnerById = <String, String>{};
+  final UserTaskProgressService _progressService = UserTaskProgressService();
+  String? _loadedProgressUserId;
+  bool _isProgressLoading = false;
 
   void _go(int i) => setState(() => _index = i);
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final user = Provider.of<AuthProvider>(context).user;
+    final userId = user?.id.trim();
+    if (userId == null || userId.isEmpty) {
+      _loadedProgressUserId = null;
+      return;
+    }
+    if (_loadedProgressUserId == userId) return;
+    _loadedProgressUserId = userId;
+    unawaited(_loadProgress(userId));
+  }
 
   String _activeUserId() =>
       context.read<AuthProvider>().user?.id.trim().isNotEmpty == true
@@ -43,10 +65,102 @@ class _MainShellScreenState extends State<MainShellScreen> {
     return tasks.where((task) => _isOwned(task, userId)).toList();
   }
 
+  bool _hasSignedInUser() {
+    final userId = context.read<AuthProvider>().user?.id.trim();
+    return userId != null && userId.isNotEmpty;
+  }
+
+  Future<void> _loadProgress(String userId) async {
+    setState(() => _isProgressLoading = true);
+    try {
+      final snapshot = await _progressService.fetchProgress();
+      if (!mounted) return;
+      if (_activeUserId() != userId) {
+        setState(() => _isProgressLoading = false);
+        return;
+      }
+      setState(() {
+        _replaceProgress(userId, snapshot);
+        _isProgressLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isProgressLoading = false);
+    }
+  }
+
+  void _replaceProgress(String userId, UserTaskProgressSnapshot snapshot) {
+    final oldSavedIds = _savedTasks
+        .where((task) => _isOwned(task, userId))
+        .map((task) => task.id)
+        .toList();
+    final oldCompletedIds = _completedTasks
+        .where((task) => _isOwned(task, userId))
+        .map((task) => task.id)
+        .toList();
+
+    _savedTasks.removeWhere((task) => _isOwned(task, userId));
+    _completedTasks.removeWhere((task) => _isOwned(task, userId));
+    for (final id in oldSavedIds) {
+      _savedTaskIds.remove(id);
+      _savedAtById.remove(id);
+    }
+    for (final id in oldCompletedIds) {
+      _completedTaskIds.remove(id);
+      _completedAtById.remove(id);
+    }
+
+    for (final entry in snapshot.savedTasks) {
+      _taskOwnerById[entry.task.id] = userId;
+      _savedTasks.add(entry.task);
+      _savedTaskIds.add(entry.task.id);
+      _savedAtById[entry.task.id] = entry.at ?? DateTime.now();
+    }
+    for (final entry in snapshot.completedTasks) {
+      _taskOwnerById[entry.task.id] = userId;
+      _completedTasks.add(entry.task);
+      _completedTaskIds.add(entry.task.id);
+      _completedAtById[entry.task.id] = entry.at ?? DateTime.now();
+    }
+    _claimedRewardIds
+      ..clear()
+      ..addAll(snapshot.claimedRewardIds);
+  }
+
+  void _queueProgressSync(Future<void> Function() action) {
+    if (!_hasSignedInUser()) return;
+    unawaited(_runProgressSync(action));
+  }
+
+  Future<void> _runProgressSync(Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Өгөгдөл хадгалахад алдаа гарлаа.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
   void _rememberTasks(List<StandardTask> tasks) {
     final userId = _activeUserId();
     setState(() {
-      for (final task in tasks.reversed) {
+      final nextOrder = _ownedTasks(_mapTasks, userId).length + 1;
+      final orderedTasks = <StandardTask>[
+        for (var i = 0; i < tasks.length; i++)
+          tasks[i].copyWith(order: nextOrder + i),
+      ];
+
+      for (final task in orderedTasks) {
+        _taskOwnerById[task.id] = userId;
+        _mapTasks.add(task);
+      }
+
+      for (final task in orderedTasks.reversed) {
         _taskOwnerById[task.id] = userId;
         _recentTasks.removeWhere(
           (existing) => _isOwned(existing, userId) && _sameTask(existing, task),
@@ -64,6 +178,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
 
   void _saveTask(StandardTask task) {
     final userId = _activeUserId();
+    final savedAt = DateTime.now();
     setState(() {
       _savedTasks.removeWhere((existing) {
         final remove =
@@ -78,8 +193,9 @@ class _MainShellScreenState extends State<MainShellScreen> {
       _taskOwnerById[task.id] = userId;
       _savedTasks.insert(0, task);
       _savedTaskIds.add(task.id);
-      _savedAtById[task.id] = DateTime.now();
+      _savedAtById[task.id] = savedAt;
     });
+    _queueProgressSync(() => _progressService.saveTask(task, savedAt: savedAt));
   }
 
   void _removeSaved(StandardTask task) {
@@ -88,46 +204,49 @@ class _MainShellScreenState extends State<MainShellScreen> {
       _savedTaskIds.remove(task.id);
       _savedAtById.remove(task.id);
     });
+    _queueProgressSync(() => _progressService.removeSavedTask(task.id));
   }
 
   void _setTaskCompleted(StandardTask task, bool completed) {
     final userId = _activeUserId();
+    final completedAt = DateTime.now();
     setState(() {
       _taskOwnerById[task.id] = userId;
       if (completed) {
         _completedTasks.removeWhere((existing) => existing.id == task.id);
         _completedTasks.insert(0, task);
         _completedTaskIds.add(task.id);
-        _completedAtById[task.id] = DateTime.now();
+        _completedAtById[task.id] = completedAt;
       } else {
         _completedTasks.removeWhere((existing) => existing.id == task.id);
         _completedTaskIds.remove(task.id);
         _completedAtById.remove(task.id);
       }
     });
+    _queueProgressSync(
+      () => _progressService.setCompletedTask(
+        task,
+        completed,
+        completedAt: completedAt,
+      ),
+    );
+  }
+
+  void _claimReward(String rewardId) {
+    setState(() => _claimedRewardIds.add(rewardId));
+    _queueProgressSync(() => _progressService.claimReward(rewardId));
   }
 
   void _openTaskRoute(StandardTask task) {
     final userId = _activeUserId();
-    final savedTaskIds = _ownedTasks(
-      _savedTasks,
-      userId,
-    ).map((task) => task.id).toSet();
-    final completedTaskIds = _ownedTasks(
-      _completedTasks,
-      userId,
-    ).map((task) => task.id).toSet();
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => MapScreen(
-          tasks: [task.copyWith(order: 1)],
-          savedTaskIds: savedTaskIds,
-          completedTaskIds: completedTaskIds,
-          onSaveTask: _saveTask,
-          onTaskCompletionChanged: _setTaskCompleted,
-        ),
-      ),
-    );
+    final routeTask = task.copyWith(order: 1);
+    setState(() {
+      _taskOwnerById[routeTask.id] = userId;
+      _mapTasks
+        ..clear()
+        ..add(routeTask);
+      _index = 2;
+    });
   }
 
   @override
@@ -137,6 +256,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
         ? activeUser!.id.trim()
         : 'local_user';
     final recentTasks = _ownedTasks(_recentTasks, userId);
+    final mapTasks = _ownedTasks(_mapTasks, userId);
     final savedTasks = _ownedTasks(_savedTasks, userId);
     final completedTasks = _ownedTasks(_completedTasks, userId);
     final savedTaskIds = savedTasks.map((task) => task.id).toSet();
@@ -149,6 +269,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
         onTasksCreated: _rememberTasks,
         onSaveTask: _saveTask,
         onOpenTaskRoute: _openTaskRoute,
+        onOpenMap: () => _go(2),
         onTaskCompletionChanged: _setTaskCompleted,
         onOpenSaved: () => _go(1),
       ),
@@ -158,10 +279,20 @@ class _MainShellScreenState extends State<MainShellScreen> {
         onRemove: _removeSaved,
         onOpenRoute: _openTaskRoute,
       ),
-      const MapScreen(),
+      MapScreen(
+        tasks: mapTasks,
+        savedTaskIds: savedTaskIds,
+        completedTaskIds: completedTaskIds,
+        onSaveTask: _saveTask,
+        onTaskCompletionChanged: _setTaskCompleted,
+        reserveBottomNavSpace: true,
+      ),
       _RewardsTab(
-        completedTasks: completedTasks.length,
+        completedTasks: completedTasks,
+        completedAtById: _completedAtById,
         savedCount: savedTasks.length,
+        claimedRewardIds: _claimedRewardIds,
+        onClaimReward: _claimReward,
       ),
       _ProfileTab(
         plannedCount: recentTasks.length,
@@ -341,10 +472,19 @@ class _SavedTabState extends State<_SavedTab> {
 }
 
 class _RewardsTab extends StatefulWidget {
-  final int completedTasks;
+  final List<StandardTask> completedTasks;
+  final Map<String, DateTime> completedAtById;
   final int savedCount;
+  final Set<String> claimedRewardIds;
+  final ValueChanged<String> onClaimReward;
 
-  const _RewardsTab({required this.completedTasks, required this.savedCount});
+  const _RewardsTab({
+    required this.completedTasks,
+    required this.completedAtById,
+    required this.savedCount,
+    required this.claimedRewardIds,
+    required this.onClaimReward,
+  });
 
   @override
   State<_RewardsTab> createState() => _RewardsTabState();
@@ -352,13 +492,13 @@ class _RewardsTab extends StatefulWidget {
 
 class _RewardsTabState extends State<_RewardsTab> {
   int _tabIndex = 0;
-  final Set<String> _claimedRewards = <String>{};
 
   @override
   Widget build(BuildContext context) {
-    final totalScore = _activityScore(widget.completedTasks, widget.savedCount);
+    final completedCount = widget.completedTasks.length;
+    final totalScore = _activityScore(completedCount, widget.savedCount);
     final achievements = _buildAchievements(
-      completedTasks: widget.completedTasks,
+      completedTasks: completedCount,
       savedCount: widget.savedCount,
     );
     final rewards = _buildRewards(totalScore);
@@ -384,7 +524,7 @@ class _RewardsTabState extends State<_RewardsTab> {
             _RewardStatsGrid(
               totalScore: totalScore,
               weeklyScore: totalScore,
-              completedTasks: widget.completedTasks,
+              completedTasks: completedCount,
               unlockedRewards: unlockedRewards,
             ),
             const SizedBox(height: 10),
@@ -402,9 +542,9 @@ class _RewardsTabState extends State<_RewardsTab> {
               for (final item in rewards) ...[
                 _RewardCard(
                   item: item,
-                  claimed: _claimedRewards.contains(item.id),
+                  claimed: widget.claimedRewardIds.contains(item.id),
                   onClaim: item.unlocked
-                      ? () => setState(() => _claimedRewards.add(item.id))
+                      ? () => widget.onClaimReward(item.id)
                       : null,
                 ),
                 const SizedBox(height: 12),
@@ -413,6 +553,18 @@ class _RewardsTabState extends State<_RewardsTab> {
               text:
                   '$completedAchievements/${achievements.length} амжилт биелсэн',
             ),
+            if (widget.completedTasks.isNotEmpty) ...[
+              const SizedBox(height: 18),
+              const _SectionLabel('ДУУССАН АЖЛУУД'),
+              const SizedBox(height: 10),
+              for (final task in widget.completedTasks.take(5)) ...[
+                _HistoryTaskTile(
+                  task: task,
+                  completedAt: widget.completedAtById[task.id],
+                ),
+                const SizedBox(height: 10),
+              ],
+            ],
           ],
         ),
       ),

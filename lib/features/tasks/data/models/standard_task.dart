@@ -55,6 +55,45 @@ class StandardTask {
     this.notes = '',
   });
 
+  factory StandardTask.fromJson(Map<String, dynamic> json) {
+    double? readDouble(dynamic value) {
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value);
+      return null;
+    }
+
+    bool readBool(dynamic value) {
+      if (value is bool) return value;
+      if (value is String) return value.toLowerCase() == 'true';
+      return false;
+    }
+
+    int readInt(dynamic value, int fallback) {
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      if (value is String) return int.tryParse(value) ?? fallback;
+      return fallback;
+    }
+
+    return StandardTask(
+      id: json['id']?.toString() ?? '',
+      order: readInt(json['order'], 1),
+      title: json['title']?.toString() ?? '',
+      category: json['category']?.toString() ?? '',
+      locationText: json['locationText']?.toString() ?? '',
+      timeText: json['timeText']?.toString() ?? '',
+      priority: parsePriority(json['priority']?.toString()),
+      needsPlaceSearch: readBool(json['needsPlaceSearch']),
+      placeSearchQuery: json['placeSearchQuery']?.toString() ?? '',
+      lat: readDouble(json['lat']),
+      lng: readDouble(json['lng']),
+      source: json['source']?.toString() == 'manual'
+          ? TaskSource.manual
+          : TaskSource.ai,
+      notes: json['notes']?.toString() ?? '',
+    );
+  }
+
   StandardTask copyWith({
     int? order,
     String? title,
@@ -87,18 +126,18 @@ class StandardTask {
   }
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'order': order,
-        'title': title,
-        'category': category,
-        'locationText': locationText,
-        'timeText': timeText,
-        'priority': priorityToString(priority),
-        'needsPlaceSearch': needsPlaceSearch,
-        'placeSearchQuery': placeSearchQuery,
-        'lat': lat,
-        'lng': lng,
-        'source': source == TaskSource.ai ? 'ai' : 'manual',
-        'notes': notes,
-      };
+    'id': id,
+    'order': order,
+    'title': title,
+    'category': category,
+    'locationText': locationText,
+    'timeText': timeText,
+    'priority': priorityToString(priority),
+    'needsPlaceSearch': needsPlaceSearch,
+    'placeSearchQuery': placeSearchQuery,
+    'lat': lat,
+    'lng': lng,
+    'source': source == TaskSource.ai ? 'ai' : 'manual',
+    'notes': notes,
+  };
 }

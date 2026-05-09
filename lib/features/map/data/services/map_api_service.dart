@@ -49,7 +49,7 @@ class MapApiService {
             .toList();
       }
       return <PlacePredictionModel>[];
-    } on DioException catch (e) {
+    } on DioException {
       // Fallback to mock data on network error
       return _mockService.autocomplete(query);
     }
@@ -71,23 +71,9 @@ class MapApiService {
         return PlaceDetailModel.fromJson(Map<String, dynamic>.from(data));
       }
       throw Exception('Байршлын мэдээлэл буруу байна.');
-    } on DioException catch (e) {
+    } on DioException {
       // Fallback to mock data on network error
       return _mockService.getPlaceDetails(placeId);
     }
-  }
-
-  String _extractMessage(DioException e, String fallback) {
-    final data = e.response?.data;
-    if (data is Map) {
-      final err = data['error'];
-      if (err is Map && err['message'] is String) {
-        return err['message'] as String;
-      }
-      if (data['message'] is String) {
-        return data['message'] as String;
-      }
-    }
-    return fallback;
   }
 }

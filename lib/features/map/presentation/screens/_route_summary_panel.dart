@@ -70,115 +70,159 @@ class RouteSummaryPanel extends StatelessWidget {
         ? <RouteSegment>[segments[focusedIndex!]]
         : activeSegments;
 
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-          boxShadow: [
-            BoxShadow(
-              color: Color(0x22000000),
-              blurRadius: 28,
-              offset: Offset(0, -8),
-            ),
-          ],
-        ),
-        child: SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 14, 20, 18),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 44,
-                    height: 5,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFD9DEE7),
-                      borderRadius: BorderRadius.circular(99),
-                    ),
-                  ),
+    final minSize = visibleSegments.length <= 1 ? 0.24 : 0.20;
+    final maxSize = switch (visibleSegments.length) {
+      0 => 0.26,
+      1 => 0.36,
+      2 => 0.50,
+      3 => 0.62,
+      _ => 0.78,
+    };
+    final initialSize = switch (visibleSegments.length) {
+      0 => 0.26,
+      1 => 0.34,
+      2 => 0.42,
+      _ => 0.46,
+    };
+    final snapSizes = <double>{minSize, initialSize, maxSize}.toList()..sort();
+
+    return DraggableScrollableSheet(
+      key: ValueKey(
+        'route_sheet_${visibleSegments.length}_${completed.length}_${focusedIndex ?? -1}_$isLoading',
+      ),
+      minChildSize: minSize,
+      initialChildSize: initialSize,
+      maxChildSize: maxSize,
+      snap: true,
+      snapSizes: snapSizes,
+      builder: (context, scrollController) {
+        return Material(
+          color: Colors.transparent,
+          child: Container(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+              boxShadow: [
+                BoxShadow(
+                  color: Color(0x22000000),
+                  blurRadius: 28,
+                  offset: Offset(0, -8),
                 ),
-                const SizedBox(height: 20),
-                Row(
-                  children: [
-                    Expanded(
+              ],
+            ),
+            child: CustomScrollView(
+              controller: scrollController,
+              physics: const ClampingScrollPhysics(),
+              slivers: [
+                SliverToBoxAdapter(
+                  child: SafeArea(
+                    top: false,
+                    bottom: false,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
                       child: Column(
+                        mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
-                            'Өнөөдрийн маршрут',
-                            style: TextStyle(
-                              color: AppColors.textDark,
-                              fontSize: 22,
-                              fontWeight: FontWeight.w900,
+                          Center(
+                            child: Container(
+                              width: 42,
+                              height: 3,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFD9DEE7),
+                                borderRadius: BorderRadius.circular(99),
+                              ),
                             ),
                           ),
-                          const SizedBox(height: 8),
-                          Text(
-                            '${segments.length} ажил · ${((totalDuration + totalDelay) / 60).round()} мин · ${(totalDistance / 1000).toStringAsFixed(1)}',
-                            style: const TextStyle(
-                              color: AppColors.textMuted,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                            ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'Өнөөдрийн маршрут',
+                                      style: TextStyle(
+                                        color: AppColors.textDark,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 5),
+                                    Text(
+                                      '${segments.length} ажил · ${((totalDuration + totalDelay) / 60).round()} мин · ${(totalDistance / 1000).toStringAsFixed(1)}',
+                                      style: const TextStyle(
+                                        color: AppColors.textMuted,
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                onPressed: focusedIndex == null
+                                    ? null
+                                    : onDismissFocus,
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints.tightFor(
+                                  width: 32,
+                                  height: 32,
+                                ),
+                                icon: Icon(
+                                  focusedIndex == null
+                                      ? Icons.keyboard_arrow_up_rounded
+                                      : Icons.close_rounded,
+                                  color: const Color(0xFF94A3B8),
+                                  size: 20,
+                                ),
+                              ),
+                            ],
                           ),
+                          if (isLoading) ...[
+                            const SizedBox(height: 14),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(99),
+                              child: const LinearProgressIndicator(
+                                minHeight: 5,
+                                color: _blue,
+                                backgroundColor: Color(0xFFEFF6FF),
+                              ),
+                            ),
+                          ],
+                          if (errorMessage != null) ...[
+                            const SizedBox(height: 12),
+                            Text(
+                              errorMessage!,
+                              style: const TextStyle(
+                                color: AppColors.warning,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                          if (completed.isNotEmpty && focusedIndex == null) ...[
+                            const SizedBox(height: 12),
+                            _CompletedStrip(segment: completed.first),
+                          ],
+                          if (visibleSegments.isNotEmpty)
+                            const SizedBox(height: 12),
                         ],
                       ),
                     ),
-                    IconButton(
-                      onPressed: focusedIndex == null ? null : onDismissFocus,
-                      icon: Icon(
-                        focusedIndex == null
-                            ? Icons.keyboard_arrow_up_rounded
-                            : Icons.close_rounded,
-                        color: const Color(0xFF94A3B8),
-                        size: 30,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-                if (isLoading) ...[
-                  const SizedBox(height: 14),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(99),
-                    child: const LinearProgressIndicator(
-                      minHeight: 5,
-                      color: _blue,
-                      backgroundColor: Color(0xFFEFF6FF),
-                    ),
-                  ),
-                ],
-                if (errorMessage != null) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                    errorMessage!,
-                    style: const TextStyle(
-                      color: AppColors.warning,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 13,
-                    ),
-                  ),
-                ],
-                if (completed.isNotEmpty && focusedIndex == null) ...[
-                  const SizedBox(height: 18),
-                  _CompletedStrip(segment: completed.first),
-                ],
-                if (visibleSegments.isNotEmpty) ...[
-                  const SizedBox(height: 18),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 360),
-                    child: ListView.separated(
-                      shrinkWrap: true,
-                      padding: EdgeInsets.zero,
-                      physics: const ClampingScrollPhysics(),
-                      itemCount: visibleSegments.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 14),
-                      itemBuilder: (context, index) {
-                        final segment = visibleSegments[index];
+                if (visibleSegments.isNotEmpty)
+                  SliverPadding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    sliver: SliverList(
+                      delegate: SliverChildBuilderDelegate((context, index) {
+                        if (index.isOdd) {
+                          return const SizedBox(height: 10);
+                        }
+
+                        final segment = visibleSegments[index ~/ 2];
                         return _RouteTaskCard(
                           segment: segment,
                           color: _statusColor(segment.status),
@@ -188,15 +232,19 @@ class RouteSummaryPanel extends StatelessWidget {
                           onToggleComplete: () =>
                               onToggleComplete(segment.index),
                         );
-                      },
+                      }, childCount: visibleSegments.length * 2 - 1),
                     ),
                   ),
-                ],
+                SliverToBoxAdapter(
+                  child: SizedBox(
+                    height: MediaQuery.paddingOf(context).bottom + 14,
+                  ),
+                ),
               ],
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -209,17 +257,17 @@ class _CompletedStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 58,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      height: 46,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border.withValues(alpha: 0.70)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
+            color: Colors.black.withValues(alpha: 0.035),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
           ),
         ],
       ),
@@ -228,9 +276,9 @@ class _CompletedStrip extends StatelessWidget {
           const Icon(
             Icons.check_circle_outline_rounded,
             color: Color(0xFF5BD98D),
-            size: 25,
+            size: 20,
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: 10),
           Expanded(
             child: Text(
               segment.toLabel,
@@ -238,7 +286,7 @@ class _CompletedStrip extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: Color(0xFF9AA3B2),
-                fontSize: 17,
+                fontSize: 13.5,
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -247,7 +295,7 @@ class _CompletedStrip extends StatelessWidget {
             'Дууссан',
             style: TextStyle(
               color: Color(0xFFB8C0CC),
-              fontSize: 17,
+              fontSize: 13.5,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -297,18 +345,18 @@ class _RouteTaskCard extends StatelessWidget {
 
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
+      borderRadius: BorderRadius.circular(12),
       child: Container(
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: AppColors.border),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.border.withValues(alpha: 0.72)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
-              blurRadius: 12,
-              offset: const Offset(0, 5),
+              color: Colors.black.withValues(alpha: 0.045),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
             ),
           ],
         ),
@@ -316,10 +364,10 @@ class _RouteTaskCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
-              padding: const EdgeInsets.only(top: 4),
+              padding: const EdgeInsets.only(top: 2),
               child: Container(
-                width: 26,
-                height: 26,
+                width: 20,
+                height: 20,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(color: color, shape: BoxShape.circle),
                 child: Text(
@@ -327,26 +375,26 @@ class _RouteTaskCard extends StatelessWidget {
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w900,
-                    fontSize: 14,
+                    fontSize: 10.5,
                   ),
                 ),
               ),
             ),
-            const SizedBox(width: 14),
+            const SizedBox(width: 8),
             Container(
-              width: 54,
-              height: 54,
+              width: 32,
+              height: 32,
               decoration: BoxDecoration(
                 color: const Color(0xFFF1F3F6),
-                borderRadius: BorderRadius.circular(18),
+                borderRadius: BorderRadius.circular(9),
               ),
               child: Icon(
                 _categoryIcon(segment.toCategory),
                 color: AppColors.textDark.withValues(alpha: 0.72),
-                size: 30,
+                size: 18,
               ),
             ),
-            const SizedBox(width: 16),
+            const SizedBox(width: 10),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -360,17 +408,23 @@ class _RouteTaskCard extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             color: AppColors.textDark,
-                            fontSize: 19,
+                            fontSize: 15.5,
                             fontWeight: FontWeight.w900,
                           ),
                         ),
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 5),
+                      const Icon(
+                        Icons.edit_outlined,
+                        color: Color(0xFF9AA3B2),
+                        size: 15,
+                      ),
+                      const SizedBox(width: 6),
                       InkWell(
                         onTap: onSave,
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(10),
                         child: Padding(
-                          padding: const EdgeInsets.all(3),
+                          padding: const EdgeInsets.all(2),
                           child: Icon(
                             saved
                                 ? Icons.bookmark_rounded
@@ -378,21 +432,21 @@ class _RouteTaskCard extends StatelessWidget {
                             color: saved
                                 ? AppColors.primary
                                 : const Color(0xFFD1D7E1),
-                            size: 25,
+                            size: 19,
                           ),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 4),
                   Row(
                     children: [
                       const Icon(
                         Icons.location_on_outlined,
                         color: AppColors.textMuted,
-                        size: 18,
+                        size: 14,
                       ),
-                      const SizedBox(width: 4),
+                      const SizedBox(width: 3),
                       Expanded(
                         child: Text(
                           address,
@@ -400,40 +454,42 @@ class _RouteTaskCard extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             color: AppColors.textMuted,
-                            fontSize: 16,
+                            fontSize: 12.5,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 8),
                   LayoutBuilder(
                     builder: (context, constraints) {
-                      final narrow = constraints.maxWidth < 230;
+                      final narrow = constraints.maxWidth < 180;
                       final metric = Text(
                         '${segment.distanceKm.toStringAsFixed(1)} км · ${segment.durationMinutes} мин',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: Color(0xFF9AA3B2),
-                          fontSize: 14.5,
+                          fontSize: 12.5,
                           fontWeight: FontWeight.w700,
                         ),
                       );
                       final action = SizedBox(
-                        height: 40,
+                        height: 32,
                         child: OutlinedButton(
                           onPressed: onToggleComplete,
                           style: OutlinedButton.styleFrom(
                             foregroundColor: AppColors.textDark,
                             side: const BorderSide(color: AppColors.border),
-                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(18),
+                              borderRadius: BorderRadius.circular(14),
                             ),
                             textStyle: const TextStyle(
-                              fontSize: 15,
+                              fontSize: 13,
                               fontWeight: FontWeight.w900,
                             ),
                           ),
@@ -450,7 +506,7 @@ class _RouteTaskCard extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             metric,
-                            const SizedBox(height: 10),
+                            const SizedBox(height: 8),
                             Align(
                               alignment: Alignment.centerRight,
                               child: action,
@@ -462,7 +518,7 @@ class _RouteTaskCard extends StatelessWidget {
                       return Row(
                         children: [
                           Expanded(child: metric),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 6),
                           action,
                         ],
                       );

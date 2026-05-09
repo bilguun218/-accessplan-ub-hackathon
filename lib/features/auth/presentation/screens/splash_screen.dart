@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../../../core/constants/app_colors.dart';
 import '../providers/auth_provider.dart';
+import '../widgets/auth_background.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -24,28 +25,20 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        width: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFFEAF4FF), Color(0xFFE6F1FF)],
-          ),
-        ),
+      body: AuthBackground(
         child: SafeArea(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(34, 40, 34, 38),
+            padding: const EdgeInsets.fromLTRB(34, 44, 34, 34),
             child: Column(
               children: [
-                const Spacer(flex: 3),
+                const Spacer(flex: 4),
                 Container(
                   width: 146,
                   height: 146,
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: Colors.white.withValues(alpha: 0.88),
                     shape: BoxShape.circle,
-                    border: Border.all(color: const Color(0xFFD5E6FF)),
+                    border: Border.all(color: const Color(0xFFCDE3FF)),
                   ),
                   child: CustomPaint(painter: _SplashRoutePainter()),
                 ),
@@ -71,18 +64,18 @@ class _SplashScreenState extends State<SplashScreen> {
                     fontWeight: FontWeight.w500,
                   ),
                 ),
-                const Spacer(flex: 5),
+                const Spacer(flex: 6),
                 SizedBox(
                   width: double.infinity,
                   height: 58,
                   child: ElevatedButton(
-                    onPressed: () => context.go('/register'),
+                    onPressed: () => context.go('/login'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
                       elevation: 0,
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(22),
+                        borderRadius: BorderRadius.circular(18),
                       ),
                       textStyle: const TextStyle(
                         fontSize: 18,
@@ -102,10 +95,10 @@ class _SplashScreenState extends State<SplashScreen> {
                       foregroundColor: AppColors.primary,
                       side: const BorderSide(
                         color: AppColors.primary,
-                        width: 1.5,
+                        width: 1.6,
                       ),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(22),
+                        borderRadius: BorderRadius.circular(18),
                       ),
                       textStyle: const TextStyle(
                         fontSize: 18,
@@ -127,7 +120,7 @@ class _SplashScreenState extends State<SplashScreen> {
 class _SplashRoutePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    final blue = Paint()
+    final route = Paint()
       ..color = AppColors.primary
       ..strokeWidth = 4
       ..strokeCap = StrokeCap.round
@@ -160,7 +153,7 @@ class _SplashRoutePainter extends CustomPainter {
         size.height * 0.75,
       );
 
-    canvas.drawPath(path, blue);
+    canvas.drawPath(path, route);
     canvas.drawCircle(
       Offset(size.width * 0.28, size.height * 0.32),
       24,

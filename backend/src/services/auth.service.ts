@@ -61,7 +61,11 @@ export async function registerUser(input: RegisterInput) {
   return { user: sanitizeUser(user), ...tokens };
 }
 
-export async function loginUser(email: string, password: string) {
+export async function loginUser(
+  email: string,
+  password: string,
+  userType?: 'general' | 'organization'
+) {
   const user = await User.findOne({ email: email.toLowerCase() }).select(
     '+passwordHash +refreshTokenHashes'
   );
@@ -71,6 +75,18 @@ export async function loginUser(email: string, password: string) {
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) {
     throw ApiError.unauthorized('Имэйл эсвэл нууц үг буруу байна.', 'INVALID_CREDENTIALS');
+  }
+  if (userType === 'organization' && user.userType !== 'organization') {
+    throw ApiError.forbidden(
+      'Энэ бүртгэл байгууллагын эрхгүй байна.',
+      'ORGANIZATION_ACCESS_REQUIRED'
+    );
+  }
+  if (userType === 'general' && user.userType === 'organization') {
+    throw ApiError.forbidden(
+      'Байгууллагын бүртгэлээр байгууллага сонгож нэвтэрнэ үү.',
+      'GENERAL_ACCESS_REQUIRED'
+    );
   }
   const tokens = await issueTokens(user);
   return { user: sanitizeUser(user), ...tokens };

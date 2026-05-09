@@ -35,6 +35,10 @@ export const loginSchema = z.object({
   password: z.string().min(1, 'Нууц үг шаардлагатай.'),
 });
 
+export const loginWithTypeSchema = loginSchema.extend({
+  userType: z.enum(['general', 'organization']).optional(),
+});
+
 export const refreshSchema = z.object({
   refreshToken: z.string().min(1),
 });
@@ -53,4 +57,4 @@ export const resetPasswordSchema = z.object({
 });
 
 export type RegisterDto = z.infer<typeof registerSchema>;
-export type LoginDto = z.infer<typeof loginSchema>;
+export type LoginDto = z.infer<typeof loginWithTypeSchema>;

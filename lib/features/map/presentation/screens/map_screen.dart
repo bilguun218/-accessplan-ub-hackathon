@@ -24,6 +24,8 @@ class MapScreen extends StatefulWidget {
     this.completedTaskIds = const <String>{},
     this.onSaveTask,
     this.onTaskCompletionChanged,
+    this.reserveBottomNavSpace = false,
+    this.enablePlaceSelection = false,
   });
 
   final List<StandardTask> tasks;
@@ -32,6 +34,8 @@ class MapScreen extends StatefulWidget {
   final ValueChanged<StandardTask>? onSaveTask;
   final void Function(StandardTask task, bool completed)?
   onTaskCompletionChanged;
+  final bool reserveBottomNavSpace;
+  final bool enablePlaceSelection;
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -79,6 +83,7 @@ class _MapScreenState extends State<MapScreen> {
   // Task-driven route state
   List<RouteSegment> _segments = <RouteSegment>[];
   Set<Polyline> _segmentPolylines = <Polyline>{};
+  Set<Polyline> _placeRoutePolylines = <Polyline>{};
   Set<Marker> _taskMarkers = <Marker>{};
   bool _isBuildingRoute = false;
   String? _routeErrorMessage;
@@ -108,13 +113,69 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void didUpdateWidget(covariant MapScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.savedTaskIds != widget.savedTaskIds) {
+    final tasksChanged = !_sameRouteTasks(oldWidget.tasks, widget.tasks);
+
+    if (!_sameStringSet(oldWidget.savedTaskIds, widget.savedTaskIds)) {
       _savedTaskIds = Set<String>.of(widget.savedTaskIds);
     }
-    if (oldWidget.completedTaskIds != widget.completedTaskIds) {
+    if (!_sameStringSet(oldWidget.completedTaskIds, widget.completedTaskIds)) {
       _completedTaskIds = Set<String>.of(widget.completedTaskIds);
-      _refreshStatuses();
+      unawaited(_refreshStatuses());
     }
+
+    if (tasksChanged) {
+      _clearRouteState();
+      if (widget.tasks.isNotEmpty &&
+          _currentLatLng != null &&
+          !_isBuildingRoute) {
+        unawaited(_buildRouteForTasks());
+      }
+    }
+  }
+
+  bool _sameRouteTasks(List<StandardTask> a, List<StandardTask> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (!_sameRouteTask(a[i], b[i])) return false;
+    }
+    return true;
+  }
+
+  bool _sameStringSet(Set<String> a, Set<String> b) {
+    if (a.length != b.length) return false;
+    for (final value in a) {
+      if (!b.contains(value)) return false;
+    }
+    return true;
+  }
+
+  bool _sameRouteTask(StandardTask a, StandardTask b) {
+    return a.id == b.id &&
+        a.order == b.order &&
+        a.title == b.title &&
+        a.category == b.category &&
+        a.locationText == b.locationText &&
+        a.timeText == b.timeText &&
+        a.priority == b.priority &&
+        a.needsPlaceSearch == b.needsPlaceSearch &&
+        a.placeSearchQuery == b.placeSearchQuery &&
+        a.lat == b.lat &&
+        a.lng == b.lng;
+  }
+
+  void _clearRouteState() {
+    setState(() {
+      _segments = <RouteSegment>[];
+      _segmentPolylines = <Polyline>{};
+      _placeRoutePolylines = <Polyline>{};
+      _taskMarkers = <Marker>{};
+      _routableTasks = <StandardTask>[];
+      _focusedSegmentIndex = null;
+      _routeErrorMessage = null;
+      if (widget.tasks.isEmpty) {
+        _startPointMarker = null;
+      }
+    });
   }
 
   @override
@@ -352,6 +413,7 @@ class _MapScreenState extends State<MapScreen> {
       _routeErrorMessage = null;
       _segments = <RouteSegment>[];
       _segmentPolylines = <Polyline>{};
+      _placeRoutePolylines = <Polyline>{};
       _taskMarkers = <Marker>{};
       _focusedSegmentIndex = null;
       _startPointMarker = _makeStartPointMarker(origin);
@@ -509,7 +571,7 @@ class _MapScreenState extends State<MapScreen> {
           ),
           icon: icon,
           zIndexInt: status == RouteTaskStatus.current ? 2 : 1,
-          onTap: () => _onSegmentTap(i),
+          onTap: () => _onTaskMarkerTap(t, i),
         ),
       );
     }
@@ -730,7 +792,43 @@ class _MapScreenState extends State<MapScreen> {
       southwest: LatLng(minLat, minLng),
       northeast: LatLng(maxLat, maxLng),
     );
+    if (minLat == maxLat && minLng == maxLng) {
+      await _animateTo(LatLng(minLat, minLng), zoom: 15);
+      return;
+    }
     await controller.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
+  }
+
+  Future<void> _fitLatLngs(List<LatLng> points, {double padding = 90}) async {
+    if (points.isEmpty) return;
+    final controller = _controller ?? await _controllerCompleter.future;
+
+    double minLat = points.first.latitude;
+    double maxLat = points.first.latitude;
+    double minLng = points.first.longitude;
+    double maxLng = points.first.longitude;
+
+    for (final point in points) {
+      if (point.latitude < minLat) minLat = point.latitude;
+      if (point.latitude > maxLat) maxLat = point.latitude;
+      if (point.longitude < minLng) minLng = point.longitude;
+      if (point.longitude > maxLng) maxLng = point.longitude;
+    }
+
+    if (minLat == maxLat && minLng == maxLng) {
+      await _animateTo(points.first, zoom: 15);
+      return;
+    }
+
+    await controller.animateCamera(
+      CameraUpdate.newLatLngBounds(
+        LatLngBounds(
+          southwest: LatLng(minLat, minLng),
+          northeast: LatLng(maxLat, maxLng),
+        ),
+        padding,
+      ),
+    );
   }
 
   void _onSegmentTap(int index) {
@@ -763,6 +861,10 @@ class _MapScreenState extends State<MapScreen> {
       southwest: LatLng(minLat, minLng),
       northeast: LatLng(maxLat, maxLng),
     );
+    if (minLat == maxLat && minLng == maxLng) {
+      await _animateTo(LatLng(minLat, minLng), zoom: 15);
+      return;
+    }
     await controller.animateCamera(CameraUpdate.newLatLngBounds(bounds, 100));
   }
 
@@ -947,9 +1049,64 @@ class _MapScreenState extends State<MapScreen> {
       _isSearching = false;
       _errorMessage = null;
       _selectedPlace = null;
+      _markers = <Marker>{};
+      _placeRoutePolylines = <Polyline>{};
     });
 
     _goToCurrentLocation();
+  }
+
+  Future<void> _onTaskMarkerTap(StandardTask task, int segmentIndex) async {
+    _onSegmentTap(segmentIndex);
+    FocusScope.of(context).unfocus();
+
+    setState(() {
+      _isLoadingPlace = true;
+      _suggestions = [];
+      _isSearching = false;
+      _errorMessage = null;
+    });
+
+    final detail = await _findPlaceDetailForTask(task);
+    if (!mounted) return;
+
+    if (detail == null) {
+      setState(() {
+        _isLoadingPlace = false;
+        _errorMessage = 'Энэ ажлын газрын дэлгэрэнгүй мэдээлэл олдсонгүй.';
+      });
+      return;
+    }
+
+    await _selectPlace(detail, moveCamera: false);
+  }
+
+  Future<PlaceDetailModel?> _findPlaceDetailForTask(StandardTask task) async {
+    final queries = <String>[
+      task.locationText,
+      task.placeSearchQuery,
+      task.title,
+      task.category,
+    ].map((value) => value.trim()).where((value) => value.isNotEmpty).toList();
+
+    for (final query in queries) {
+      final predictions = await _mapApiService.autocomplete(query);
+      if (predictions.isEmpty) continue;
+
+      return _mapApiService.getPlaceDetails(predictions.first.placeId);
+    }
+
+    if (task.lat == null || task.lng == null) return null;
+
+    return PlaceDetailModel(
+      placeId: 'task_${task.id}',
+      name: task.locationText.isNotEmpty ? task.locationText : task.title,
+      secondaryText: 'Ажлын байршил',
+      address: task.locationText,
+      latitude: task.lat!,
+      longitude: task.lng!,
+      category: task.category.isNotEmpty ? task.category : 'Бусад',
+    );
   }
 
   Future<void> _onSuggestionTap(PlacePredictionModel prediction) async {
@@ -969,21 +1126,7 @@ class _MapScreenState extends State<MapScreen> {
 
       if (!mounted) return;
 
-      final position = LatLng(detail.latitude, detail.longitude);
-
-      final marker = Marker(
-        markerId: _selectedMarkerId,
-        position: position,
-        infoWindow: InfoWindow(title: detail.name, snippet: detail.address),
-      );
-
-      setState(() {
-        _selectedPlace = detail;
-        _markers = {marker};
-        _isLoadingPlace = false;
-      });
-
-      await _animateTo(position, zoom: 16);
+      await _selectPlace(detail);
     } catch (_) {
       if (!mounted) return;
 
@@ -994,12 +1137,113 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  Future<void> _selectPlace(
+    PlaceDetailModel detail, {
+    bool moveCamera = true,
+  }) async {
+    final position = LatLng(detail.latitude, detail.longitude);
+    final marker = Marker(
+      markerId: _selectedMarkerId,
+      position: position,
+      infoWindow: InfoWindow(title: detail.name, snippet: detail.address),
+      onTap: () {
+        setState(() {
+          _selectedPlace = detail;
+        });
+      },
+    );
+
+    setState(() {
+      _selectedPlace = detail;
+      _markers = {marker};
+      _placeRoutePolylines = <Polyline>{};
+      _isLoadingPlace = false;
+    });
+
+    if (moveCamera) {
+      await _animateTo(position, zoom: 16);
+    }
+  }
+
+  void _clearSelectedPlace() {
+    setState(() {
+      _selectedPlace = null;
+    });
+  }
+
+  Future<void> _showDirectionsToSelectedPlace() async {
+    final place = _selectedPlace;
+    if (place == null) return;
+
+    var origin = _currentLatLng;
+    if (origin == null) {
+      await _goToCurrentLocation();
+      if (!mounted) return;
+      origin = _currentLatLng;
+    }
+
+    if (origin == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Одоогийн байршил олдсонгүй.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    final LatLng routeOrigin = origin;
+    final destination = LatLng(place.latitude, place.longitude);
+
+    setState(() {
+      _isBuildingRoute = true;
+      _routeErrorMessage = null;
+      _startPointMarker = _makeStartPointMarker(routeOrigin);
+    });
+
+    final result = await _segmentRouteService.fetch(
+      origin: routeOrigin,
+      destination: destination,
+    );
+
+    if (!mounted) return;
+
+    final points = result?.points ?? <LatLng>[routeOrigin, destination];
+    setState(() {
+      _placeRoutePolylines = {
+        Polyline(
+          polylineId: const PolylineId('selected_place_route'),
+          points: points,
+          width: 6,
+          color: const Color(0xFF2563EB),
+          startCap: Cap.roundCap,
+          endCap: Cap.roundCap,
+          jointType: JointType.round,
+        ),
+      };
+      _isBuildingRoute = false;
+    });
+
+    await _fitLatLngs(<LatLng>[
+      routeOrigin,
+      destination,
+      ...points,
+    ], padding: 110);
+  }
+
   @override
   Widget build(BuildContext context) {
     final viewPadding = MediaQuery.of(context).padding;
 
     final showSuggestionPanel =
         _suggestions.isNotEmpty || _isSearching || _errorMessage != null;
+    final canSelectPlace = widget.enablePlaceSelection;
+    final selectedPlaceBottom = widget.tasks.isNotEmpty
+        ? 360.0
+        : (widget.reserveBottomNavSpace ? 118.0 : 24.0);
+    final selectedPlaceMaxHeight = widget.tasks.isNotEmpty
+        ? 330.0
+        : MediaQuery.sizeOf(context).height * (canSelectPlace ? 0.62 : 0.54);
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -1015,7 +1259,7 @@ class _MapScreenState extends State<MapScreen> {
               if (_startPointMarker != null) _startPointMarker!,
               if (_liveLocationMarker != null) _liveLocationMarker!,
             },
-            polylines: _segmentPolylines,
+            polylines: {..._segmentPolylines, ..._placeRoutePolylines},
             myLocationEnabled: false,
             myLocationButtonEnabled: false,
             zoomControlsEnabled: false,
@@ -1024,7 +1268,12 @@ class _MapScreenState extends State<MapScreen> {
               top: viewPadding.top + 94,
               bottom: _segments.isEmpty ? 24 : 430,
             ),
-            onTap: (_) => FocusScope.of(context).unfocus(),
+            onTap: (_) {
+              FocusScope.of(context).unfocus();
+              if (_selectedPlace != null) {
+                _clearSelectedPlace();
+              }
+            },
             onMapCreated: (controller) {
               _controller = controller;
 
@@ -1111,10 +1360,7 @@ class _MapScreenState extends State<MapScreen> {
           ),
 
           if (widget.tasks.isNotEmpty)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
+            Positioned.fill(
               child: RouteSummaryPanel(
                 segments: _segments,
                 isLoading: _isBuildingRoute,
@@ -1180,33 +1426,553 @@ class _MapScreenState extends State<MapScreen> {
 
           if (_selectedPlace != null)
             Positioned(
-              bottom: 24,
+              bottom: selectedPlaceBottom,
               left: 16,
               right: 16,
-              child: SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(context, _selectedPlace);
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2563EB),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: const Text(
-                    'Байршил сонгох',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
+              child: _SelectedPlaceCard(
+                place: _selectedPlace!,
+                maxHeight: selectedPlaceMaxHeight,
+                onClose: _clearSelectedPlace,
+                onDirections: _showDirectionsToSelectedPlace,
+                onSelect: canSelectPlace
+                    ? () => Navigator.pop(context, _selectedPlace)
+                    : null,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SelectedPlaceCard extends StatelessWidget {
+  const _SelectedPlaceCard({
+    required this.place,
+    required this.maxHeight,
+    required this.onClose,
+    required this.onDirections,
+    required this.onSelect,
+  });
+
+  final PlaceDetailModel place;
+  final double maxHeight;
+  final VoidCallback onClose;
+  final VoidCallback onDirections;
+  final VoidCallback? onSelect;
+
+  bool get _showDetailBody => true;
+
+  String get _coordinateText =>
+      '${place.latitude.toStringAsFixed(5)}, ${place.longitude.toStringAsFixed(5)}';
+
+  String get _statusText {
+    if (place.hours.isNotEmpty) return place.hours;
+    return place.openNow ? 'Нээлттэй' : 'Хаалттай';
+  }
+
+  String get _categoryLine {
+    final parts = <String>[
+      if (place.category.isNotEmpty) place.category,
+      if (place.priceLevel.isNotEmpty) place.priceLevel,
+      if (place.accessibility.isNotEmpty) '♿',
+    ];
+    return parts.join(' · ');
+  }
+
+  Widget _detailRow({
+    required IconData icon,
+    required String text,
+    Color iconColor = const Color(0xFF008A9A),
+    int maxLines = 2,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 22, color: iconColor),
+        const SizedBox(width: 18),
+        Expanded(
+          child: Text(
+            text,
+            maxLines: maxLines,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w500,
+              color: AppColors.textDark,
+              height: 1.35,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _actionItem({
+    required IconData icon,
+    required String label,
+    VoidCallback? onTap,
+    bool primary = false,
+  }) {
+    final color = primary ? Colors.white : const Color(0xFF008A9A);
+    final bg = primary ? const Color(0xFF008A9A) : const Color(0xFFD8F7FB);
+
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
+                child: Icon(icon, color: color, size: 23),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                label,
+                maxLines: 2,
+                textAlign: TextAlign.center,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppColors.textDark,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  height: 1.1,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _ratingRow() {
+    if (place.rating <= 0) return const SizedBox.shrink();
+
+    return Row(
+      children: [
+        Text(
+          place.rating.toStringAsFixed(1),
+          style: const TextStyle(
+            fontSize: 14.5,
+            color: AppColors.textDark,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(width: 5),
+        _RatingStars(rating: place.rating),
+        if (place.reviewCount > 0) ...[
+          const SizedBox(width: 5),
+          Text(
+            '(${place.reviewCount})',
+            style: const TextStyle(
+              fontSize: 14,
+              color: AppColors.textMuted,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        constraints: BoxConstraints(maxHeight: maxHeight),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.18),
+              blurRadius: 24,
+              offset: const Offset(0, 12),
+            ),
+          ],
+        ),
+        child: SafeArea(
+          top: false,
+          bottom: false,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: ListView(
+              shrinkWrap: true,
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
+              children: [
+                Center(
+                  child: Container(
+                    width: 42,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(99),
                     ),
                   ),
                 ),
-              ),
+                const SizedBox(height: 12),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            place.name,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppColors.textDark,
+                              fontSize: 26,
+                              fontWeight: FontWeight.w500,
+                              height: 1.1,
+                            ),
+                          ),
+                          if (place.secondaryText.isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              place.secondaryText,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: AppColors.textMuted,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: onClose,
+                      tooltip: 'Хаах',
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                _ratingRow(),
+                if (_categoryLine.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    _categoryLine,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppColors.textMuted,
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 18),
+                const _PlaceTabs(),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    _actionItem(
+                      icon: Icons.directions_rounded,
+                      label: 'Чиглэл',
+                      primary: true,
+                      onTap: onDirections,
+                    ),
+                    _actionItem(
+                      icon: Icons.bookmark_border_rounded,
+                      label: 'Хадгалах',
+                    ),
+                    _actionItem(
+                      icon: Icons.near_me_outlined,
+                      label: 'Ойролцоо',
+                    ),
+                    _actionItem(icon: Icons.share_outlined, label: 'Хуваалцах'),
+                  ],
+                ),
+                if (_showDetailBody) ...[
+                  const SizedBox(height: 16),
+                  Divider(color: Colors.black.withValues(alpha: 0.08)),
+                  const SizedBox(height: 16),
+                  _detailRow(
+                    icon: Icons.place_outlined,
+                    text: place.address.isNotEmpty
+                        ? place.address
+                        : 'Хаягийн мэдээлэл байхгүй',
+                    maxLines: 3,
+                  ),
+                  const SizedBox(height: 18),
+                  _detailRow(
+                    icon: Icons.schedule_rounded,
+                    text: _statusText,
+                    iconColor: place.openNow
+                        ? const Color(0xFF008A9A)
+                        : AppColors.error,
+                    maxLines: 1,
+                  ),
+                  if (place.website.isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    _detailRow(
+                      icon: Icons.public_rounded,
+                      text: place.website,
+                      maxLines: 1,
+                    ),
+                  ],
+                  if (place.phone.isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    _detailRow(
+                      icon: Icons.phone_rounded,
+                      text: place.phone,
+                      maxLines: 1,
+                    ),
+                  ],
+                  if (place.plusCode.isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    _detailRow(
+                      icon: Icons.apps_rounded,
+                      text: place.plusCode,
+                      maxLines: 1,
+                    ),
+                  ],
+                  const SizedBox(height: 18),
+                  _detailRow(
+                    icon: Icons.explore_outlined,
+                    text: 'Координат: $_coordinateText',
+                    maxLines: 1,
+                  ),
+                  if (place.accessibility.isNotEmpty ||
+                      place.tags.isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final tag in [
+                          ...place.accessibility.take(2),
+                          ...place.tags.take(3),
+                        ])
+                          _PlaceChip(label: tag),
+                      ],
+                    ),
+                  ],
+                  if (place.reviews.isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    const Text(
+                      'Сэтгэгдэл',
+                      style: TextStyle(
+                        color: AppColors.textDark,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    for (final review in place.reviews.take(2))
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _ReviewPreview(review: review),
+                      ),
+                  ],
+                ],
+                if (onSelect != null) ...[
+                  const SizedBox(height: 6),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: onSelect,
+                      icon: const Icon(Icons.check_rounded, size: 20),
+                      label: const Text('Байршил сонгох'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RatingStars extends StatelessWidget {
+  const _RatingStars({required this.rating});
+
+  final double rating;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        for (var i = 1; i <= 5; i++)
+          Icon(
+            rating >= i
+                ? Icons.star_rounded
+                : (rating >= i - 0.5
+                      ? Icons.star_half_rounded
+                      : Icons.star_border_rounded),
+            color: const Color(0xFFF4B400),
+            size: 18,
+          ),
+      ],
+    );
+  }
+}
+
+class _PlaceTabs extends StatelessWidget {
+  const _PlaceTabs();
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: const [
+        Expanded(child: _PlaceTab(label: 'Overview', active: true)),
+        Expanded(child: _PlaceTab(label: 'Reviews')),
+        Expanded(child: _PlaceTab(label: 'About')),
+      ],
+    );
+  }
+}
+
+class _PlaceTab extends StatelessWidget {
+  const _PlaceTab({required this.label, this.active = false});
+
+  final String label;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    const activeColor = Color(0xFF008A9A);
+
+    return Column(
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            color: active ? activeColor : AppColors.textMuted,
+            fontSize: 15,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Container(
+          height: 3,
+          width: 78,
+          decoration: BoxDecoration(
+            color: active ? activeColor : Colors.transparent,
+            borderRadius: BorderRadius.circular(99),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PlaceChip extends StatelessWidget {
+  const _PlaceChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: const Color(0xFFD8F7FB),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Color(0xFF006B76),
+          fontSize: 12.5,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _ReviewPreview extends StatelessWidget {
+  const _ReviewPreview({required this.review});
+
+  final PlaceReviewModel review;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.04)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  review.author,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppColors.textDark,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              Text(
+                review.rating.toStringAsFixed(1),
+                style: const TextStyle(
+                  color: AppColors.textMuted,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(width: 4),
+              const Icon(
+                Icons.star_rounded,
+                color: Color(0xFFF4B400),
+                size: 15,
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            review.text,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: AppColors.textMuted,
+              fontSize: 12.8,
+              fontWeight: FontWeight.w600,
+              height: 1.35,
+            ),
+          ),
         ],
       ),
     );

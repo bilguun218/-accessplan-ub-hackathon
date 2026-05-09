@@ -18,7 +18,7 @@ class PlaceGeocodingService {
   final MockMapApiService _mockApi;
 
   PlaceGeocodingService({MockMapApiService? mockApi})
-      : _mockApi = mockApi ?? MockMapApiService();
+    : _mockApi = mockApi ?? MockMapApiService();
 
   /// Resolve a free-text query (e.g. "Тэнгис", "search nearby bank")
   /// against the local mock dataset and return the matched place's
@@ -34,8 +34,9 @@ class PlaceGeocodingService {
       final first = predictions.first;
       if (first.placeId.isEmpty) return null;
 
-      final PlaceDetailModel detail =
-          await _mockApi.getPlaceDetails(first.placeId);
+      final PlaceDetailModel detail = await _mockApi.getPlaceDetails(
+        first.placeId,
+      );
       return GeocodedPlace(
         latLng: LatLng(detail.latitude, detail.longitude),
         name: detail.name,
@@ -46,7 +47,7 @@ class PlaceGeocodingService {
     }
   }
 
-  /// AI parser may emit "search nearby <category>" — strip the prefix so
+  /// AI parser may emit `search nearby <category>` — strip the prefix so
   /// the mock autocomplete sees just the keyword.
   String _stripSearchPrefix(String q) {
     final lower = q.toLowerCase();

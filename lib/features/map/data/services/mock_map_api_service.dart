@@ -3473,12 +3473,286 @@ class MockMapApiService {
       orElse: () => mockPlaces[0],
     );
 
+    return _placeDetailFromMock(place);
+  }
+
+  PlaceDetailModel _placeDetailFromMock(Map<String, dynamic> place) {
+    double parseDouble(dynamic value) {
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value) ?? 0.0;
+      return 0.0;
+    }
+
+    final name = place['mainText']?.toString() ?? '';
+    final index = _indexFromPlace(place);
+    final category = _inferCategory(name);
+    final seed = _stableSeed(name, index);
+    final openNow = (seed.abs() % 5) != 0;
+
     return PlaceDetailModel(
-      placeId: place['placeId'] as String,
-      name: place['mainText'] as String,
-      address: place['address'] as String,
-      latitude: place['latitude'] as double,
-      longitude: place['longitude'] as double,
+      placeId: place['placeId']?.toString() ?? '',
+      name: name,
+      secondaryText: place['secondaryText']?.toString() ?? '',
+      address: place['address']?.toString() ?? '',
+      latitude: parseDouble(place['latitude']),
+      longitude: parseDouble(place['longitude']),
+      category: category,
+      rating: _pseudoRating(seed),
+      reviewCount: _pseudoReviewCount(seed),
+      openNow: openNow,
+      hours: openNow ? 'Нээлттэй · Хаах 22:00' : 'Хаалттай · Нээгдэх 09:00',
+      phone: _pseudoPhone(seed),
+      website: _websiteFor(name, index),
+      plusCode: _plusCodeFor(seed),
+      priceLevel: _pseudoPrice(seed, category),
+      tags: _tagsFor(category),
+      accessibility: _accessibilityFor(seed),
+      reviews: _reviewsFor(seed, name),
     );
+  }
+
+  int _indexFromPlace(Map<String, dynamic> place) {
+    final id = place['placeId']?.toString() ?? '';
+    final match = RegExp(r'\d+$').firstMatch(id);
+    return int.tryParse(match?.group(0) ?? '') ?? 0;
+  }
+
+  int _stableSeed(String text, int index) {
+    var seed = index + 17;
+    for (final unit in text.codeUnits) {
+      seed = ((seed * 31) + unit) & 0x7fffffff;
+    }
+    return seed;
+  }
+
+  String _inferCategory(String name) {
+    final n = name.toLowerCase();
+    if (_containsAny(n, [
+      'hotel',
+      'буудал',
+      'lodge',
+      'guest',
+      'inn',
+      'resort',
+    ])) {
+      return 'Зочид буудал';
+    }
+    if (_containsAny(n, ['museum', 'музей', 'gallery', 'galery'])) {
+      return 'Музей';
+    }
+    if (_containsAny(n, ['hospital', 'эмнэл', 'clinic', 'medical', 'health'])) {
+      return 'Эмнэлэг';
+    }
+    if (_containsAny(n, ['bank', 'банк'])) {
+      return 'Банк';
+    }
+    if (_containsAny(n, ['cafe', 'café', 'coffee', 'кофе', 'кафе'])) {
+      return 'Кафе';
+    }
+    if (_containsAny(n, [
+      'restaurant',
+      'ресторан',
+      'kitchen',
+      'grill',
+      'sushi',
+      'pizza',
+      'burger',
+      'lounge',
+      'food',
+    ])) {
+      return 'Ресторан';
+    }
+    if (_containsAny(n, [
+      'mart',
+      'mall',
+      'store',
+      'shop',
+      'дэлгүүр',
+      'plaza',
+      'market',
+      'supermarket',
+      'cu ',
+      'gs25',
+      'circle k',
+      'emart',
+    ])) {
+      return 'Дэлгүүр';
+    }
+    if (_containsAny(n, [
+      'university',
+      'school',
+      'institute',
+      'college',
+      'их сургууль',
+      'academy',
+      'kindergarten',
+      'цэцэрлэг',
+      'сургууль',
+    ])) {
+      return 'Боловсрол';
+    }
+    if (_containsAny(n, [
+      'theatre',
+      'theater',
+      'cinema',
+      'opera',
+      'palace',
+      'temple',
+      'monastery',
+      'хийд',
+      'парк',
+      'park',
+      'arena',
+      'stadium',
+    ])) {
+      return 'Соёл';
+    }
+    if (_containsAny(n, [
+      'service',
+      'service center',
+      'сервис',
+      'wash',
+      'auto',
+      'repair',
+      'gas',
+      'fuel',
+    ])) {
+      return 'Сервис';
+    }
+    if (_containsAny(n, [
+      'office',
+      'government',
+      'ministry',
+      'embassy',
+      'tower',
+      'centre',
+      'center',
+    ])) {
+      return 'Албан газар';
+    }
+    return 'Бусад';
+  }
+
+  bool _containsAny(String haystack, List<String> needles) {
+    for (final needle in needles) {
+      if (haystack.contains(needle)) return true;
+    }
+    return false;
+  }
+
+  double _pseudoRating(int seed) {
+    final value = 3.3 + ((seed.abs() % 18) / 10.0);
+    return double.parse(value.toStringAsFixed(1));
+  }
+
+  int _pseudoReviewCount(int seed) {
+    return 24 + (seed.abs() % 680);
+  }
+
+  String _pseudoPrice(int seed, String category) {
+    if (category == 'Эмнэлэг' || category == 'Зочид буудал') {
+      return ['₮₮', '₮₮₮', '₮₮₮'][seed.abs() % 3];
+    }
+    if (category == 'Албан газар' || category == 'Боловсрол') return '₮';
+    return ['₮', '₮₮', '₮₮', '₮₮₮'][seed.abs() % 4];
+  }
+
+  String _pseudoPhone(int seed) {
+    final first = 1000 + (seed.abs() % 8999);
+    final second = 1000 + ((seed >> 4).abs() % 8999);
+    return '+976 $first $second';
+  }
+
+  String _websiteFor(String name, int index) {
+    final slug = name
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '')
+        .trim();
+    final host = slug.isNotEmpty ? slug : 'place$index';
+    return '$host.mn';
+  }
+
+  String _plusCodeFor(int seed) {
+    final a = 100 + (seed.abs() % 899);
+    final b = 10 + ((seed >> 5).abs() % 89);
+    return 'WW$a+$b Ulaanbaatar';
+  }
+
+  List<String> _tagsFor(String category) {
+    switch (category) {
+      case 'Зочид буудал':
+        return const ['Wi-Fi', 'Зогсоол', 'Ресторантай'];
+      case 'Музей':
+        return const ['Соёл', 'Үзвэр', 'Аяллын газар'];
+      case 'Эмнэлэг':
+        return const ['Эмчийн цаг', 'Лаборатори', 'Яаралтай'];
+      case 'Банк':
+        return const ['ATM', 'Цахим үйлчилгээ'];
+      case 'Кафе':
+        return const ['Wi-Fi', 'Takeaway', 'Кофе'];
+      case 'Ресторан':
+        return const ['Хүргэлт', 'Захиалга', 'Гэр бүлд ээлтэй'];
+      case 'Дэлгүүр':
+        return const ['Хүргэлт', 'Сонголт өргөн'];
+      case 'Боловсрол':
+        return const ['Хичээл', 'Сургалт'];
+      case 'Соёл':
+        return const ['Үзвэр', 'Аялал жуулчлал'];
+      case 'Сервис':
+        return const ['Авто', 'Угаалга'];
+      case 'Албан газар':
+        return const ['Үйлчилгээ', 'Цахим'];
+      default:
+        return const ['Үйлчилгээ'];
+    }
+  }
+
+  List<String> _accessibilityFor(int seed) {
+    const all = [
+      'Тэргэнцэрт ээлтэй орц',
+      'Лифттэй',
+      'Тэргэнцэрт ээлтэй ариун цэврийн өрөө',
+      'Харааны тэмдэглэгээтэй',
+      'Хүлээлгийн бүс',
+    ];
+    final count = 2 + (seed.abs() % 3);
+    final start = seed.abs() % all.length;
+    return List<String>.generate(count, (i) => all[(start + i) % all.length]);
+  }
+
+  List<PlaceReviewModel> _reviewsFor(int seed, String name) {
+    const authors = [
+      'Энхтүвшин',
+      'Саруул',
+      'Бат-Эрдэнэ',
+      'Дөлгөөн',
+      'Ганболд',
+      'Болор',
+      'Тэмүүлэн',
+      'Номин',
+    ];
+    const phrases = [
+      'Үйлчилгээ хурдан, орчин цэвэрхэн.',
+      'Ажилтнууд найрсаг, мэргэжлийн.',
+      'Үнэ боломжийн, чанар сайн.',
+      'Орц гарц тэргэнцэрт ээлтэй.',
+      'Ахин очно гэж бодож байна.',
+    ];
+    final firstRating = 3.6 + ((seed.abs() % 14) / 10.0);
+    final secondRating = 3.4 + (((seed >> 3).abs() % 16) / 10.0);
+    return [
+      PlaceReviewModel(
+        author: authors[seed.abs() % authors.length],
+        rating: double.parse(firstRating.toStringAsFixed(1)),
+        text: phrases[seed.abs() % phrases.length],
+        date: '2026-04-${10 + (seed.abs() % 20)}',
+      ),
+      PlaceReviewModel(
+        author: authors[(seed >> 5).abs() % authors.length],
+        rating: double.parse(secondRating.toStringAsFixed(1)),
+        text: phrases[((seed >> 7).abs()) % phrases.length],
+        date: '2026-04-${1 + ((seed >> 4).abs() % 9)}',
+      ),
+    ];
   }
 }

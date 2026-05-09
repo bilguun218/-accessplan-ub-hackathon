@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import {
   registerSchema,
-  loginSchema,
+  loginWithTypeSchema,
   refreshSchema,
   logoutSchema,
   forgotPasswordSchema,
@@ -17,8 +17,12 @@ export async function register(req: Request, res: Response) {
 }
 
 export async function login(req: Request, res: Response) {
-  const data = loginSchema.parse(req.body);
-  const result = await authService.loginUser(data.email, data.password);
+  const data = loginWithTypeSchema.parse(req.body);
+  const result = await authService.loginUser(
+    data.email,
+    data.password,
+    data.userType
+  );
   res.json(result);
 }
 

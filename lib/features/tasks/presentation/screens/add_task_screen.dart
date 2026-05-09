@@ -18,6 +18,7 @@ class AddTaskScreen extends StatefulWidget {
   final ValueChanged<List<StandardTask>>? onTasksCreated;
   final ValueChanged<StandardTask>? onSaveTask;
   final ValueChanged<StandardTask>? onOpenTaskRoute;
+  final VoidCallback? onOpenMap;
   final void Function(StandardTask task, bool completed)?
   onTaskCompletionChanged;
   final VoidCallback? onOpenSaved;
@@ -30,6 +31,7 @@ class AddTaskScreen extends StatefulWidget {
     this.onTasksCreated,
     this.onSaveTask,
     this.onOpenTaskRoute,
+    this.onOpenMap,
     this.onTaskCompletionChanged,
     this.onOpenSaved,
   });
@@ -105,6 +107,11 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       ];
       widget.onTasksCreated?.call(tasks);
       setState(() => _isParsing = false);
+      final onOpenMap = widget.onOpenMap;
+      if (onOpenMap != null) {
+        onOpenMap();
+        return;
+      }
       await Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => MapScreen(

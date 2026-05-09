@@ -4,6 +4,8 @@ import helmet from 'helmet';
 import authRoutes from './routes/auth.routes';
 import mapsRoutes from './routes/maps.routes';
 import aiRoutes from './routes/ai.routes';
+import progressRoutes from './routes/progress.routes';
+import organizationsRoutes from './routes/organizations.routes';
 import { errorHandler, notFoundHandler } from './middleware/error.middleware';
 import { generalLimiter } from './middleware/rateLimit.middleware';
 
@@ -22,6 +24,8 @@ export function createApp() {
   app.use('/api/auth', authRoutes);
   app.use('/api/maps', mapsRoutes);
   app.use('/api/ai', aiRoutes);
+  app.use('/api/progress', progressRoutes);
+  app.use('/api/organizations', organizationsRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
