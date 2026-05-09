@@ -1,30 +1,37 @@
 import 'package:dio/dio.dart';
 
+import '../../../../core/config/api_config.dart';
 import '../models/place_detail_model.dart';
 import '../models/place_prediction_model.dart';
+import 'mock_map_api_service.dart';
 
 class MapApiService {
-  // USB debug + adb reverse tcp:5000 tcp:5000 ашиглаж байгаа тул localhost.
-  // Wi-Fi холболтоор бол: 'http://192.168.15.169:5000/api'
-  // Emulator-ийн хувьд:    'http://10.0.2.2:5000/api'
-  static const String _baseUrl = 'http://localhost:5000/api';
-
   final Dio _dio;
+  final MockMapApiService _mockService = MockMapApiService();
+
+  // Set to true to use mock data instead of real API
+  static bool useMockData = false;
 
   MapApiService({Dio? dio})
-      : _dio = dio ??
-            Dio(
-              BaseOptions(
-                baseUrl: _baseUrl,
-                connectTimeout: const Duration(seconds: 10),
-                receiveTimeout: const Duration(seconds: 15),
-                contentType: 'application/json',
-              ),
-            );
+    : _dio =
+          dio ??
+          Dio(
+            BaseOptions(
+              baseUrl: ApiConfig.baseUrl,
+              connectTimeout: const Duration(seconds: 10),
+              receiveTimeout: const Duration(seconds: 15),
+              contentType: 'application/json',
+            ),
+          );
 
   Future<List<PlacePredictionModel>> autocomplete(String input) async {
     final query = input.trim();
     if (query.isEmpty) return <PlacePredictionModel>[];
+
+    // Use mock data if enabled
+    if (useMockData) {
+      return _mockService.autocomplete(query);
+    }
 
     try {
       final response = await _dio.get(
@@ -35,18 +42,25 @@ class MapApiService {
       if (data is List) {
         return data
             .whereType<Map>()
-            .map((e) => PlacePredictionModel.fromJson(
-                  Map<String, dynamic>.from(e),
-                ))
+            .map(
+              (e) =>
+                  PlacePredictionModel.fromJson(Map<String, dynamic>.from(e)),
+            )
             .toList();
       }
       return <PlacePredictionModel>[];
     } on DioException catch (e) {
-      throw Exception(_extractMessage(e, 'Байршил хайхад алдаа гарлаа.'));
+      // Fallback to mock data on network error
+      return _mockService.autocomplete(query);
     }
   }
 
   Future<PlaceDetailModel> getPlaceDetails(String placeId) async {
+    // Use mock data if enabled
+    if (useMockData) {
+      return _mockService.getPlaceDetails(placeId);
+    }
+
     try {
       final response = await _dio.get(
         '/maps/place-details',
@@ -58,7 +72,8 @@ class MapApiService {
       }
       throw Exception('Байршлын мэдээлэл буруу байна.');
     } on DioException catch (e) {
-      throw Exception(_extractMessage(e, 'Байршлын мэдээлэл татаж чадсангүй.'));
+      // Fallback to mock data on network error
+      return _mockService.getPlaceDetails(placeId);
     }
   }
 

@@ -18,15 +18,16 @@ class MapScreen extends StatefulWidget {
 }
 
 class _MapScreenState extends State<MapScreen> {
-  static const LatLng _ulaanbaatar = LatLng(47.918873, 106.917701);
   static const double _defaultZoom = 13.0;
-  static const MarkerId _ubMarkerId = MarkerId('ulaanbaatar_center');
   static const MarkerId _selectedMarkerId = MarkerId('selected_place');
 
   final Completer<GoogleMapController> _controllerCompleter =
       Completer<GoogleMapController>();
+
   final TextEditingController _searchCtrl = TextEditingController();
+
   final FocusNode _searchFocus = FocusNode();
+
   final MapApiService _mapApiService = MapApiService();
 
   GoogleMapController? _controller;
@@ -43,22 +44,23 @@ class _MapScreenState extends State<MapScreen> {
   MapType _mapType = MapType.normal;
 
   List<PlacePredictionModel> _suggestions = <PlacePredictionModel>[];
+
   PlaceDetailModel? _selectedPlace;
-  Set<Marker> _markers = <Marker>{
-    const Marker(
-      markerId: _ubMarkerId,
-      position: _ulaanbaatar,
-      infoWindow: InfoWindow(title: 'Улаанбаатар хот'),
-    ),
-  };
+
+  Set<Marker> _markers = <Marker>{};
+
+  late CameraPosition _initialCameraPosition;
+  bool _locationLoaded = false;
 
   @override
   void initState() {
     super.initState();
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _initLocation();
-    });
+    // Initialize with a default location, will be updated when actual location loads
+    _initialCameraPosition = const CameraPosition(
+      target: LatLng(47.918873, 106.917701),
+      zoom: _defaultZoom,
+    );
+    _initLocation();
   }
 
   @override
@@ -75,9 +77,7 @@ class _MapScreenState extends State<MapScreen> {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
 
       if (!serviceEnabled) {
-        _setPermissionMessage(
-          'Байршлын үйлчилгээ идэвхгүй байна. Тохиргоог нээнэ үү.',
-        );
+        _setPermissionMessage('Байршлын үйлчилгээ идэвхгүй байна.');
         return;
       }
 
@@ -88,14 +88,12 @@ class _MapScreenState extends State<MapScreen> {
       }
 
       if (status.isPermanentlyDenied) {
-        _setPermissionMessage(
-          'Байршлын зөвшөөрөл бүрмөсөн хаалттай. Тохиргооноос идэвхжүүлнэ үү.',
-        );
+        _setPermissionMessage('Байршлын permission permanently denied.');
         return;
       }
 
       if (!status.isGranted) {
-        _setPermissionMessage('Байршлын зөвшөөрөл шаардлагатай байна.');
+        _setPermissionMessage('Location permission required.');
         return;
       }
 
@@ -106,26 +104,64 @@ class _MapScreenState extends State<MapScreen> {
         _permissionMessage = null;
       });
 
+      await _goToCurrentLocation();
+    } catch (e) {
+      debugPrint('Init location error: $e');
+    }
+  }
+
+  Future<void> _goToCurrentLocation() async {
+    try {
       final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          timeLimit: Duration(seconds: 8),
+          accuracy: LocationAccuracy.best,
+          timeLimit: Duration(seconds: 10),
         ),
       );
 
-      await _animateTo(LatLng(position.latitude, position.longitude), zoom: 15);
-    } catch (_) {
-      // Emulator эсвэл location fix олдохгүй үед УБ default center дээр үлдэнэ.
+      final currentLatLng = LatLng(position.latitude, position.longitude);
+
+      if (!mounted) return;
+
+      // Update initial camera position if this is the first load
+      if (!_locationLoaded) {
+        _initialCameraPosition = CameraPosition(
+          target: currentLatLng,
+          zoom: 16,
+        );
+        _locationLoaded = true;
+      }
+
+      setState(() {
+        _markers = {
+          Marker(
+            markerId: const MarkerId('current_location'),
+            position: currentLatLng,
+            infoWindow: const InfoWindow(title: 'My Current Location'),
+            icon: BitmapDescriptor.defaultMarkerWithHue(
+              BitmapDescriptor.hueAzure,
+            ),
+          ),
+        };
+      });
+
+      await _animateTo(currentLatLng, zoom: 16);
+    } catch (e) {
+      debugPrint('Current location error: $e');
     }
   }
 
   void _setPermissionMessage(String msg) {
     if (!mounted) return;
-    setState(() => _permissionMessage = msg);
+
+    setState(() {
+      _permissionMessage = msg;
+    });
   }
 
   Future<void> _animateTo(LatLng pos, {double zoom = 15}) async {
     final controller = _controller ?? await _controllerCompleter.future;
+
     await controller.animateCamera(
       CameraUpdate.newCameraPosition(CameraPosition(target: pos, zoom: zoom)),
     );
@@ -135,21 +171,6 @@ class _MapScreenState extends State<MapScreen> {
     setState(() {
       _trafficEnabled = !_trafficEnabled;
     });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          _trafficEnabled
-              ? 'Түгжрэлийн давхарга асаалттай.'
-              : 'Түгжрэлийн давхарга унтраалттай.',
-        ),
-        duration: const Duration(seconds: 1),
-      ),
-    );
-  }
-
-  Future<void> _goToUlaanbaatarCenter() async {
-    await _animateTo(_ulaanbaatar, zoom: 15);
   }
 
   void _changeMapType(MapType type) {
@@ -169,32 +190,15 @@ class _MapScreenState extends State<MapScreen> {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(24),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.12),
-                blurRadius: 20,
-                offset: const Offset(0, 8),
-              ),
-            ],
           ),
           child: SafeArea(
             top: false,
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Газрын зургийн төрөл',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.textDark,
-                  ),
-                ),
-                const SizedBox(height: 12),
                 _MapTypeOption(
-                  title: 'Энгийн',
-                  subtitle: 'Стандарт газрын зураг',
+                  title: 'Normal',
+                  subtitle: 'Standard map',
                   icon: Icons.map_rounded,
                   isSelected: _mapType == MapType.normal,
                   onTap: () {
@@ -203,8 +207,8 @@ class _MapScreenState extends State<MapScreen> {
                   },
                 ),
                 _MapTypeOption(
-                  title: 'Сансрын',
-                  subtitle: 'Бодит satellite зураг',
+                  title: 'Satellite',
+                  subtitle: 'Satellite map',
                   icon: Icons.satellite_alt_rounded,
                   isSelected: _mapType == MapType.satellite,
                   onTap: () {
@@ -213,8 +217,8 @@ class _MapScreenState extends State<MapScreen> {
                   },
                 ),
                 _MapTypeOption(
-                  title: 'Холимог',
-                  subtitle: 'Satellite + замын нэр, тэмдэглэгээ',
+                  title: 'Hybrid',
+                  subtitle: 'Hybrid map',
                   icon: Icons.layers_rounded,
                   isSelected: _mapType == MapType.hybrid,
                   onTap: () {
@@ -223,7 +227,7 @@ class _MapScreenState extends State<MapScreen> {
                   },
                 ),
                 _MapTypeOption(
-                  title: 'Газрын хэлбэр',
+                  title: 'Terrain',
                   subtitle: 'Terrain map',
                   icon: Icons.terrain_rounded,
                   isSelected: _mapType == MapType.terrain,
@@ -244,12 +248,14 @@ class _MapScreenState extends State<MapScreen> {
     _searchDebounce?.cancel();
 
     final query = value.trim();
+
     if (query.isEmpty) {
       setState(() {
-        _suggestions = <PlacePredictionModel>[];
+        _suggestions = [];
         _isSearching = false;
         _errorMessage = null;
       });
+
       return;
     }
 
@@ -266,65 +272,58 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _runAutocomplete(String query) async {
     try {
       final result = await _mapApiService.autocomplete(query);
+
       if (!mounted) return;
-      // Хэрэглэгч энэ хооронд өөр зүйл бичсэн бол хэвээр үлдээх.
-      if (_searchCtrl.text.trim() != query) return;
+
+      if (_searchCtrl.text.trim() != query) {
+        return;
+      }
+
       setState(() {
         _suggestions = result;
         _isSearching = false;
-        _errorMessage = null;
       });
     } catch (_) {
       if (!mounted) return;
-      if (_searchCtrl.text.trim() != query) return;
+
       setState(() {
-        _suggestions = <PlacePredictionModel>[];
+        _suggestions = [];
         _isSearching = false;
-        _errorMessage = 'Байршил хайхад алдаа гарлаа.';
+        _errorMessage = 'Search failed.';
       });
     }
   }
 
   void _clearSearch() {
     _searchDebounce?.cancel();
+
     _searchCtrl.clear();
 
     setState(() {
-      _suggestions = <PlacePredictionModel>[];
+      _suggestions = [];
       _isSearching = false;
       _errorMessage = null;
       _selectedPlace = null;
-      _markers = <Marker>{
-        const Marker(
-          markerId: _ubMarkerId,
-          position: _ulaanbaatar,
-          infoWindow: InfoWindow(title: 'Улаанбаатар хот'),
-        ),
-      };
     });
 
-    _goToUlaanbaatarCenter();
+    _goToCurrentLocation();
   }
 
   Future<void> _onSuggestionTap(PlacePredictionModel prediction) async {
     _searchDebounce?.cancel();
+
     FocusScope.of(context).unfocus();
 
     setState(() {
       _isLoadingPlace = true;
-      _suggestions = <PlacePredictionModel>[];
+      _suggestions = [];
       _isSearching = false;
       _errorMessage = null;
-      _searchCtrl.text = prediction.mainText.isNotEmpty
-          ? prediction.mainText
-          : prediction.description;
-      _searchCtrl.selection = TextSelection.fromPosition(
-        TextPosition(offset: _searchCtrl.text.length),
-      );
     });
 
     try {
       final detail = await _mapApiService.getPlaceDetails(prediction.placeId);
+
       if (!mounted) return;
 
       final position = LatLng(detail.latitude, detail.longitude);
@@ -332,91 +331,61 @@ class _MapScreenState extends State<MapScreen> {
       final marker = Marker(
         markerId: _selectedMarkerId,
         position: position,
-        infoWindow: InfoWindow(
-          title: detail.name.isNotEmpty ? detail.name : prediction.mainText,
-          snippet: detail.address.isEmpty ? null : detail.address,
-        ),
+        infoWindow: InfoWindow(title: detail.name, snippet: detail.address),
       );
 
       setState(() {
         _selectedPlace = detail;
-        _markers = <Marker>{marker};
+        _markers = {marker};
         _isLoadingPlace = false;
-        _searchCtrl.text = detail.name.isNotEmpty
-            ? detail.name
-            : prediction.mainText;
-        _searchCtrl.selection = TextSelection.fromPosition(
-          TextPosition(offset: _searchCtrl.text.length),
-        );
       });
 
       await _animateTo(position, zoom: 16);
-
-      final controller = _controller;
-      if (controller != null) {
-        await controller.showMarkerInfoWindow(_selectedMarkerId);
-      }
     } catch (_) {
       if (!mounted) return;
+
       setState(() {
         _isLoadingPlace = false;
-        _errorMessage = 'Байршлын мэдээлэл татаж чадсангүй.';
+        _errorMessage = 'Failed to load place.';
       });
     }
-  }
-
-  void _showComingSoon(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        duration: const Duration(seconds: 2),
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
     final viewPadding = MediaQuery.of(context).padding;
-    final showSuggestionPanel = _suggestions.isNotEmpty ||
-        _isSearching ||
-        _errorMessage != null;
+
+    final showSuggestionPanel =
+        _suggestions.isNotEmpty || _isSearching || _errorMessage != null;
 
     return Scaffold(
       backgroundColor: AppColors.background,
       body: Stack(
         children: [
           GoogleMap(
-            initialCameraPosition: const CameraPosition(
-              target: _ulaanbaatar,
-              zoom: _defaultZoom,
-            ),
+            initialCameraPosition: _initialCameraPosition,
             mapType: _mapType,
             trafficEnabled: _trafficEnabled,
             markers: _markers,
             myLocationEnabled: _locationGranted,
-            myLocationButtonEnabled: _locationGranted,
+            myLocationButtonEnabled: false,
             zoomControlsEnabled: false,
             compassEnabled: true,
-            padding: EdgeInsets.only(
-              top: viewPadding.top + 70,
-              bottom: _selectedPlace != null ? 200 : 24,
-            ),
             onTap: (_) => FocusScope.of(context).unfocus(),
             onMapCreated: (controller) {
               _controller = controller;
+
               if (!_controllerCompleter.isCompleted) {
                 _controllerCompleter.complete(controller);
               }
             },
           ),
 
-          // Search bar + suggestion panel
           Positioned(
             top: viewPadding.top + 8,
             left: 16,
             right: 16,
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _MapSearchInput(
                   controller: _searchCtrl,
@@ -425,6 +394,7 @@ class _MapScreenState extends State<MapScreen> {
                   onChanged: _onSearchChanged,
                   onClear: _clearSearch,
                 ),
+
                 if (showSuggestionPanel)
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
@@ -440,7 +410,6 @@ class _MapScreenState extends State<MapScreen> {
             ),
           ),
 
-          // Right floating buttons
           Positioned(
             top: viewPadding.top + 82,
             right: 16,
@@ -450,21 +419,25 @@ class _MapScreenState extends State<MapScreen> {
                   icon: _trafficEnabled
                       ? Icons.traffic_rounded
                       : Icons.traffic_outlined,
-                  tooltip: _trafficEnabled ? 'Түгжрэл нуух' : 'Түгжрэл харах',
+                  tooltip: 'Traffic',
                   isActive: _trafficEnabled,
                   onTap: _toggleTraffic,
                 ),
+
                 const SizedBox(height: 10),
+
                 _MapFloatingButton(
                   icon: Icons.my_location_rounded,
-                  tooltip: 'Улаанбаатар төв',
+                  tooltip: 'Current Location',
                   isActive: false,
-                  onTap: _goToUlaanbaatarCenter,
+                  onTap: _goToCurrentLocation,
                 ),
+
                 const SizedBox(height: 10),
+
                 _MapFloatingButton(
                   icon: Icons.layers_rounded,
-                  tooltip: 'Газрын зургийн төрөл',
+                  tooltip: 'Map Type',
                   isActive: _mapType != MapType.normal,
                   onTap: _showMapTypeSheet,
                 ),
@@ -472,611 +445,44 @@ class _MapScreenState extends State<MapScreen> {
             ),
           ),
 
-          if (_trafficEnabled)
-            Positioned(
-              top: viewPadding.top + 82,
-              left: 16,
-              child: const _StatusBadge(
-                icon: Icons.traffic_rounded,
-                text: 'Түгжрэл асаалттай',
-                color: AppColors.primary,
-              ),
-            ),
-
           if (_permissionMessage != null)
             Positioned(
               top: viewPadding.top + 70,
               left: 16,
               right: 16,
-              child: Material(
-                color: Colors.transparent,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.warning.withValues(alpha: 0.95),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.location_off,
-                        color: Colors.white,
-                        size: 18,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _permissionMessage!,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: () => openAppSettings(),
-                        style: TextButton.styleFrom(
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 6),
-                        ),
-                        child: const Text(
-                          'Тохиргоо',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red,
+                  borderRadius: BorderRadius.circular(12),
                 ),
-              ),
-            ),
-
-          if (_selectedPlace != null)
-            Positioned(
-              left: 16,
-              right: 16,
-              bottom: 24,
-              child: _SelectedPlaceCard(
-                place: _selectedPlace!,
-                onRoute: () => _showComingSoon('Маршрут удахгүй нэмэгдэнэ.'),
-                onAddToWork: () =>
-                    _showComingSoon('Ажилд нэмэх удахгүй нэмэгдэнэ.'),
-                onClose: () {
-                  setState(() {
-                    _selectedPlace = null;
-                    _markers = <Marker>{
-                      const Marker(
-                        markerId: _ubMarkerId,
-                        position: _ulaanbaatar,
-                        infoWindow: InfoWindow(title: 'Улаанбаатар хот'),
+                child: Row(
+                  children: [
+                    const Icon(Icons.location_off, color: Colors.white),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _permissionMessage!,
+                        style: const TextStyle(color: Colors.white),
                       ),
-                    };
-                  });
-                },
+                    ),
+                  ],
+                ),
               ),
             ),
         ],
-      ),
-    );
-  }
-}
-
-class _MapSearchInput extends StatelessWidget {
-  const _MapSearchInput({
-    required this.controller,
-    required this.focusNode,
-    required this.isLoading,
-    required this.onChanged,
-    required this.onClear,
-  });
-
-  final TextEditingController controller;
-  final FocusNode focusNode;
-  final bool isLoading;
-  final ValueChanged<String> onChanged;
-  final VoidCallback onClear;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        height: 52,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.12),
-              blurRadius: 18,
-              offset: const Offset(0, 8),
-            ),
-          ],
-          border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
-        ),
-        child: Row(
-          children: [
-            const SizedBox(width: 14),
-            const Icon(
-              Icons.search_rounded,
-              color: AppColors.textMuted,
-              size: 22,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: TextField(
-                controller: controller,
-                focusNode: focusNode,
-                textInputAction: TextInputAction.search,
-                onChanged: onChanged,
-                decoration: const InputDecoration(
-                  hintText: 'Байршил хайх...',
-                  hintStyle: TextStyle(
-                    color: AppColors.textMuted,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  border: InputBorder.none,
-                  isCollapsed: true,
-                ),
-                style: const TextStyle(
-                  color: AppColors.textDark,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            if (isLoading)
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 12),
-                child: SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: AppColors.primary,
-                  ),
-                ),
-              )
-            else if (controller.text.isNotEmpty)
-              IconButton(
-                onPressed: onClear,
-                icon: const Icon(
-                  Icons.close_rounded,
-                  color: AppColors.textMuted,
-                ),
-                tooltip: 'Цэвэрлэх',
-              )
-            else
-              const SizedBox(width: 12),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _SuggestionPanel extends StatelessWidget {
-  const _SuggestionPanel({
-    required this.isLoading,
-    required this.errorMessage,
-    required this.suggestions,
-    required this.hasQuery,
-    required this.onTap,
-  });
-
-  final bool isLoading;
-  final String? errorMessage;
-  final List<PlacePredictionModel> suggestions;
-  final bool hasQuery;
-  final ValueChanged<PlacePredictionModel> onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    Widget body;
-    if (isLoading) {
-      body = const _PanelInfoRow(
-        icon: Icons.search_rounded,
-        text: 'Хайж байна...',
-      );
-    } else if (errorMessage != null) {
-      body = _PanelInfoRow(
-        icon: Icons.error_outline_rounded,
-        text: errorMessage!,
-        color: AppColors.warning,
-      );
-    } else if (suggestions.isEmpty) {
-      if (!hasQuery) return const SizedBox.shrink();
-      body = const _PanelInfoRow(
-        icon: Icons.location_off_rounded,
-        text: 'Байршил олдсонгүй.',
-      );
-    } else {
-      body = ListView.separated(
-        shrinkWrap: true,
-        padding: EdgeInsets.zero,
-        physics: const ClampingScrollPhysics(),
-        itemCount: suggestions.length,
-        separatorBuilder: (_, __) => Divider(
-          height: 1,
-          thickness: 1,
-          color: Colors.black.withValues(alpha: 0.05),
-        ),
-        itemBuilder: (context, index) {
-          final s = suggestions[index];
-          return InkWell(
-            onTap: () => onTap(s),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 14,
-                vertical: 12,
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 34,
-                    height: 34,
-                    decoration: BoxDecoration(
-                      color: AppColors.primary.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(
-                      Icons.location_on_rounded,
-                      color: AppColors.primary,
-                      size: 20,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          s.mainText.isNotEmpty ? s.mainText : s.description,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 14.5,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.textDark,
-                          ),
-                        ),
-                        if (s.secondaryText.isNotEmpty) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            s.secondaryText,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 12.5,
-                              color: AppColors.textMuted,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      );
-    }
-
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        constraints: const BoxConstraints(maxHeight: 320),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.12),
-              blurRadius: 18,
-              offset: const Offset(0, 8),
-            ),
-          ],
-          border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(18),
-          child: body,
-        ),
-      ),
-    );
-  }
-}
-
-class _PanelInfoRow extends StatelessWidget {
-  const _PanelInfoRow({
-    required this.icon,
-    required this.text,
-    this.color,
-  });
-
-  final IconData icon;
-  final String text;
-  final Color? color;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = color ?? AppColors.textMuted;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: c),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              text,
-              style: TextStyle(
-                fontSize: 13.5,
-                fontWeight: FontWeight.w600,
-                color: c,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SelectedPlaceCard extends StatelessWidget {
-  const _SelectedPlaceCard({
-    required this.place,
-    required this.onRoute,
-    required this.onAddToWork,
-    required this.onClose,
-  });
-
-  final PlaceDetailModel place;
-  final VoidCallback onRoute;
-  final VoidCallback onAddToWork;
-  final VoidCallback onClose;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.16),
-              blurRadius: 22,
-              offset: const Offset(0, 10),
-            ),
-          ],
-          border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 42,
-                  height: 42,
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: const Icon(
-                    Icons.location_on_rounded,
-                    color: AppColors.primary,
-                    size: 22,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        place.name.isNotEmpty ? place.name : 'Байршил',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.textDark,
-                        ),
-                      ),
-                      if (place.address.isNotEmpty) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          place.address,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 12.5,
-                            color: AppColors.textMuted,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                IconButton(
-                  onPressed: onClose,
-                  icon: const Icon(
-                    Icons.close_rounded,
-                    color: AppColors.textMuted,
-                  ),
-                  tooltip: 'Хаах',
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: onRoute,
-                    icon: const Icon(Icons.directions_rounded, size: 18),
-                    label: const Text('Маршрут харах'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      textStyle: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13.5,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: onAddToWork,
-                    icon: const Icon(Icons.add_task_rounded, size: 18),
-                    label: const Text('Ажилд нэмэх'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.primary,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      side: const BorderSide(color: AppColors.primary),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      textStyle: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13.5,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({
-    required this.icon,
-    required this.text,
-    required this.color,
-  });
-
-  final IconData icon;
-  final String text;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 220),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.95),
-        borderRadius: BorderRadius.circular(999),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.12),
-            blurRadius: 14,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: Colors.white, size: 16),
-          const SizedBox(width: 6),
-          Flexible(
-            child: Text(
-              text,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 12.5,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MapFloatingButton extends StatelessWidget {
-  const _MapFloatingButton({
-    required this.icon,
-    required this.tooltip,
-    required this.isActive,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final bool isActive;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(16),
-          child: Container(
-            width: 46,
-            height: 46,
-            decoration: BoxDecoration(
-              color: isActive ? AppColors.primary : Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.13),
-                  blurRadius: 14,
-                  offset: const Offset(0, 6),
-                ),
-              ],
-              border: Border.all(
-                color: isActive
-                    ? AppColors.primary
-                    : Colors.black.withValues(alpha: 0.06),
-              ),
-            ),
-            child: Icon(
-              icon,
-              color: isActive ? Colors.white : AppColors.textDark,
-              size: 22,
-            ),
-          ),
-        ),
       ),
     );
   }
 }
 
 class _MapTypeOption extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final bool isSelected;
+  final VoidCallback onTap;
+
   const _MapTypeOption({
     required this.title,
     required this.subtitle,
@@ -1085,85 +491,191 @@ class _MapTypeOption extends StatelessWidget {
     required this.onTap,
   });
 
-  final String title;
-  final String subtitle;
-  final IconData icon;
-  final bool isSelected;
-  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: Icon(icon),
+      title: Text(title),
+      subtitle: Text(subtitle),
+      trailing: isSelected ? const Icon(Icons.check, color: Colors.blue) : null,
+      onTap: onTap,
+    );
+  }
+}
+
+class _MapSearchInput extends StatelessWidget {
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final bool isLoading;
+  final Function(String) onChanged;
+  final VoidCallback onClear;
+
+  const _MapSearchInput({
+    required this.controller,
+    required this.focusNode,
+    required this.isLoading,
+    required this.onChanged,
+    required this.onClear,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Container(
-          margin: const EdgeInsets.only(bottom: 8),
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: isSelected
-                ? AppColors.primary.withValues(alpha: 0.08)
-                : Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: isSelected
-                  ? AppColors.primary
-                  : Colors.black.withValues(alpha: 0.06),
-            ),
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
-          child: Row(
-            children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? AppColors.primary
-                      : AppColors.primary.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Icon(
-                  icon,
-                  color: isSelected ? Colors.white : AppColors.primary,
-                  size: 22,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontSize: 14.5,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.textDark,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: const TextStyle(
-                        fontSize: 12.5,
-                        color: AppColors.textMuted,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (isSelected)
-                const Icon(
-                  Icons.check_circle_rounded,
-                  color: AppColors.primary,
-                  size: 22,
-                ),
-            ],
+        ],
+      ),
+      child: TextField(
+        controller: controller,
+        focusNode: focusNode,
+        onChanged: onChanged,
+        decoration: InputDecoration(
+          hintText: 'Search places...',
+          prefixIcon: const Icon(Icons.location_on),
+          suffixIcon: isLoading
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: Padding(
+                    padding: EdgeInsets.all(12),
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              : controller.text.isNotEmpty
+              ? IconButton(icon: const Icon(Icons.clear), onPressed: onClear)
+              : null,
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 12,
           ),
         ),
       ),
+    );
+  }
+}
+
+class _SuggestionPanel extends StatelessWidget {
+  final bool isLoading;
+  final String? errorMessage;
+  final List<PlacePredictionModel> suggestions;
+  final bool hasQuery;
+  final Function(PlacePredictionModel) onTap;
+
+  const _SuggestionPanel({
+    required this.isLoading,
+    required this.errorMessage,
+    required this.suggestions,
+    required this.hasQuery,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (isLoading && suggestions.isEmpty) {
+      return Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Padding(
+          padding: EdgeInsets.all(16),
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    if (errorMessage != null) {
+      return Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Text(errorMessage!, style: const TextStyle(color: Colors.red)),
+        ),
+      );
+    }
+
+    if (suggestions.isEmpty && !isLoading && hasQuery) {
+      return Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Padding(
+          padding: EdgeInsets.all(16),
+          child: Text('No results found'),
+        ),
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 300),
+        child: ListView.builder(
+          shrinkWrap: true,
+          itemCount: suggestions.length,
+          itemBuilder: (context, index) {
+            final suggestion = suggestions[index];
+            return ListTile(
+              leading: const Icon(Icons.location_on_outlined),
+              title: Text(suggestion.mainText),
+              subtitle: Text(
+                suggestion.secondaryText,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              onTap: () => onTap(suggestion),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _MapFloatingButton extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final bool isActive;
+  final VoidCallback onTap;
+
+  const _MapFloatingButton({
+    required this.icon,
+    required this.tooltip,
+    required this.isActive,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return FloatingActionButton(
+      mini: true,
+      backgroundColor: isActive ? Colors.blue : Colors.white,
+      foregroundColor: isActive ? Colors.white : Colors.blue,
+      tooltip: tooltip,
+      onPressed: onTap,
+      child: Icon(icon),
     );
   }
 }

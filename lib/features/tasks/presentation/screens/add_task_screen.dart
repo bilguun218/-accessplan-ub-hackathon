@@ -423,78 +423,6 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                 message: 'Байгууллагын нэр шаардлагатай.',
               ),
             ),
-            if (suggestions.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: AppColors.border),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.06),
-                      blurRadius: 16,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  children: suggestions.map((suggestion) {
-                    return InkWell(
-                      onTap: () {
-                        setState(() {
-                          _organizationController.text =
-                              suggestion.organization;
-                          _organization = suggestion.organization;
-                          _selectedBranch = suggestion.branch;
-                          _branchError = null;
-                        });
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 14,
-                        ),
-                        decoration: const BoxDecoration(
-                          border: Border(
-                            bottom: BorderSide(color: AppColors.border),
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  suggestion.branch,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                const Text(
-                                  '12-18 min away',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: AppColors.textMuted,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const Icon(
-                              Icons.north_east_rounded,
-                              size: 18,
-                              color: AppColors.textMuted,
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ),
-            ],
             if (hasMatch) ...[
               const SizedBox(height: 18),
               Row(
@@ -580,7 +508,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
             ),
             const SizedBox(height: 8),
             DropdownButtonFormField<TaskPriority>(
-              value: _priority,
+              initialValue: _priority,
               decoration: _inputDecoration('Select priority'),
               items: TaskPriority.values
                   .map(
@@ -862,26 +790,7 @@ class _HeaderText extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: const [
-        _Badge(),
-        SizedBox(height: 12),
-        Text(
-          'Smart Logistic Planner',
-          style: TextStyle(
-            fontSize: 32,
-            fontWeight: FontWeight.w800,
-            color: Color(0xFF0F172A),
-          ),
-        ),
-        SizedBox(height: 8),
-        SizedBox(
-          width: 520,
-          child: Text(
-            'Add multiple tasks and optimize your city route.',
-            style: TextStyle(color: AppColors.textMuted, fontSize: 15),
-          ),
-        ),
-      ],
+      children: const [],
     );
   }
 }
@@ -916,51 +825,7 @@ class _HeaderStats extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: AppColors.border),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 50,
-            height: 50,
-            decoration: BoxDecoration(
-              color: _primaryBlue,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: const Icon(Icons.local_taxi_rounded, color: Colors.white),
-          ),
-          const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                "Today's Tasks",
-                style: TextStyle(color: AppColors.textMuted, fontSize: 12),
-              ),
-              Text(
-                '$taskCount',
-                style: const TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
+    return Container();
   }
 }
 
