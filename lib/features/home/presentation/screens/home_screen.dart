@@ -38,10 +38,52 @@ class HomeScreen extends StatelessWidget {
     final userName = _userName(context);
 
     return Scaffold(
-      backgroundColor: AppColors.background,
-      body: SafeArea(
-        bottom: false,
-        child: ListView(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xFFE8D5F2),
+              Color(0xFFD8C7E8),
+              Color(0xFFCBB5DD),
+              Color(0xFFC3A3D0),
+              Color(0xFFB891C3),
+              Color(0xFFAA7FB3),
+              Color(0xFF9E70A4),
+              Color(0xFF9966A3),
+              Color(0xFF8E5FA0),
+              Color(0xFF82589E),
+              Color(0xFF76509D),
+              Color(0xFF6A489B),
+              Color(0xFF5F4199),
+              Color(0xFF5439A3),
+              Color(0xFF4A3AAE),
+              Color(0xFF4331B8),
+            ],
+            stops: [
+              0.0,
+              0.05,
+              0.1,
+              0.15,
+              0.2,
+              0.25,
+              0.3,
+              0.35,
+              0.4,
+              0.45,
+              0.5,
+              0.55,
+              0.6,
+              0.7,
+              0.85,
+              1.0,
+            ],
+          ),
+        ),
+        child: SafeArea(
+          bottom: false,
+          child: ListView(
           padding: const EdgeInsets.only(bottom: 24),
           children: [
             HomeHeader(userName: userName, onAvatarTap: onOpenProfile),

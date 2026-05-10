@@ -7,7 +7,9 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../tasks/data/models/extracted_task_model.dart';
 import '../../../tasks/data/models/standard_task.dart';
+import '../../../tasks/data/services/task_nlp_service.dart';
 import '../../../organizations/data/models/business_post.dart';
 import '../../../organizations/data/models/map_promotion_item.dart';
 import '../../../organizations/data/services/mock_business_post_service.dart';
@@ -62,6 +64,7 @@ class _MapScreenState extends State<MapScreen> {
   final SegmentRouteService _segmentRouteService = SegmentRouteService();
   final MockBusinessPostService _mockBusinessPostService =
       MockBusinessPostService();
+  final TaskNlpService _taskNlpService = TaskNlpService();
 
   GoogleMapController? _controller;
   Timer? _searchDebounce;
@@ -104,6 +107,7 @@ class _MapScreenState extends State<MapScreen> {
   late Set<String> _completedTaskIds;
   List<StandardTask> _routableTasks = <StandardTask>[];
   List<StandardTask> _promotionTasks = <StandardTask>[];
+  List<ExtractedTaskModel> _extractedTasks = <ExtractedTaskModel>[];
 
   late CameraPosition _initialCameraPosition;
   bool _locationLoaded = false;
@@ -1051,13 +1055,18 @@ class _MapScreenState extends State<MapScreen> {
     });
 
     _searchDebounce = Timer(const Duration(milliseconds: 300), () {
-      _runAutocomplete(query);
+      _runAutocompleteAndExtractTasks(query);
     });
   }
 
-  Future<void> _runAutocomplete(String query) async {
+  Future<void> _runAutocompleteAndExtractTasks(String query) async {
     try {
-      final result = await _mapApiService.autocomplete(query);
+      // Run both place autocomplete and NLP task extraction in parallel
+      final autocompleteResult = _mapApiService.autocomplete(query);
+      final taskExtractionResult = _taskNlpService.extractMultipleTasks(query);
+
+      final suggestions = await autocompleteResult;
+      final extractedTasks = await taskExtractionResult;
 
       if (!mounted) return;
 
@@ -1065,9 +1074,11 @@ class _MapScreenState extends State<MapScreen> {
         return;
       }
 
+      // Store extracted tasks without adding them automatically
       setState(() {
-        _suggestions = result;
+        _suggestions = suggestions;
         _isSearching = false;
+        _extractedTasks = extractedTasks;
       });
     } catch (_) {
       if (!mounted) return;
@@ -1075,8 +1086,89 @@ class _MapScreenState extends State<MapScreen> {
       setState(() {
         _suggestions = [];
         _isSearching = false;
+        _extractedTasks = [];
         _errorMessage = 'Хайлт амжилтгүй боллоо.';
       });
+    }
+  }
+
+  Future<void> _addExtractedTasksToRoute(
+    List<ExtractedTaskModel> extractedTasks,
+    String originalQuery,
+  ) async {
+    final newTasks = <StandardTask>[];
+
+    for (var i = 0; i < extractedTasks.length; i++) {
+      final extracted = extractedTasks[i];
+
+      if (extracted.taskName == null || extracted.taskName!.isEmpty) {
+        continue;
+      }
+
+      // Determine location query
+      final locationQuery =
+          extracted.branch ??
+          extracted.organization ??
+          (extracted.extractedEntities['location'] as String?) ??
+          extracted.taskName ??
+          originalQuery;
+
+      // Create a StandardTask from the extracted data
+      final task = StandardTask(
+        id: 'nlp_${DateTime.now().millisecondsSinceEpoch}_$i',
+        order: _activeRouteTasks.length + newTasks.length + 1,
+        title: extracted.taskName ?? 'Task',
+        category: extracted.organization ?? 'Other',
+        locationText: locationQuery,
+        timeText: 'Today',
+        priority: _mapTaskPriority(extracted.priority),
+        needsPlaceSearch: true,
+        placeSearchQuery: locationQuery,
+        source: TaskSource.ai,
+        notes: extracted.rawText,
+      );
+
+      newTasks.add(task);
+    }
+
+    if (newTasks.isEmpty) {
+      return;
+    }
+
+    // Add new tasks to the route
+    setState(() {
+      _promotionTasks = [..._promotionTasks, ...newTasks];
+      _selectedPlace = null;
+      _placeRoutePolylines = <Polyline>{};
+      _extractedTasks = [];
+    });
+
+    // Rebuild the route with new tasks
+    await _buildRouteForTasks();
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('${newTasks.length} ажил нэмэгдлээ'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<void> _addCurrentExtractedTasks() async {
+    if (_extractedTasks.isEmpty) return;
+    await _addExtractedTasksToRoute(_extractedTasks, _searchCtrl.text.trim());
+  }
+
+  StandardTaskPriority _mapTaskPriority(TaskPriority? priority) {
+    switch (priority) {
+      case TaskPriority.high:
+        return StandardTaskPriority.high;
+      case TaskPriority.low:
+        return StandardTaskPriority.low;
+      case TaskPriority.medium:
+      case null:
+        return StandardTaskPriority.medium;
     }
   }
 
@@ -1089,6 +1181,7 @@ class _MapScreenState extends State<MapScreen> {
       _suggestions = [];
       _isSearching = false;
       _errorMessage = null;
+      _extractedTasks = [];
       _selectedPlace = null;
       _markers = <Marker>{};
       _placeRoutePolylines = <Polyline>{};
@@ -1736,8 +1829,10 @@ class _MapScreenState extends State<MapScreen> {
                       isLoading: _isSearching,
                       errorMessage: _errorMessage,
                       suggestions: _suggestions,
+                      extractedTasks: _extractedTasks,
                       hasQuery: _searchCtrl.text.trim().isNotEmpty,
                       onTap: _onSuggestionTap,
+                      onAddExtractedTasks: _addCurrentExtractedTasks,
                     ),
                   ),
               ],
@@ -1785,15 +1880,6 @@ class _MapScreenState extends State<MapScreen> {
                   tooltip: 'Урамшуулал',
                   isActive: _showPromotions,
                   onTap: _togglePromotions,
-                ),
-
-                const SizedBox(height: 10),
-
-                _MapFloatingButton(
-                  icon: Icons.refresh_rounded,
-                  tooltip: 'Урамшуулал шинэчлэх',
-                  isActive: false,
-                  onTap: () => unawaited(_loadRouteMockPromotions()),
                 ),
 
                 const SizedBox(height: 10),
@@ -2664,7 +2750,7 @@ class _MapSearchInput extends StatelessWidget {
         child: Row(
           children: [
             const Icon(
-              Icons.search_rounded,
+              Icons.auto_awesome_rounded,
               color: Color(0xFF9AA3B2),
               size: 30,
             ),
@@ -2681,7 +2767,7 @@ class _MapSearchInput extends StatelessWidget {
                   color: AppColors.textDark,
                 ),
                 decoration: const InputDecoration(
-                  hintText: 'Газар эсвэл ажил хайх...',
+                  hintText: 'AI-тэй ажил хайх...',
                   hintStyle: TextStyle(
                     color: Color(0xFF9AA3B2),
                     fontSize: 17,
@@ -2741,15 +2827,19 @@ class _SuggestionPanel extends StatelessWidget {
   final bool isLoading;
   final String? errorMessage;
   final List<PlacePredictionModel> suggestions;
+  final List<ExtractedTaskModel> extractedTasks;
   final bool hasQuery;
   final Function(PlacePredictionModel) onTap;
+  final VoidCallback onAddExtractedTasks;
 
   const _SuggestionPanel({
     required this.isLoading,
     required this.errorMessage,
     required this.suggestions,
+    required this.extractedTasks,
     required this.hasQuery,
     required this.onTap,
+    required this.onAddExtractedTasks,
   });
 
   BoxDecoration _panelDecoration() => BoxDecoration(
@@ -2796,6 +2886,91 @@ class _SuggestionPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Show extracted tasks with add button
+    if (extractedTasks.isNotEmpty) {
+      return Material(
+        color: Colors.transparent,
+        child: Container(
+          decoration: _panelDecoration(),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(18),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 320),
+              child: SingleChildScrollView(
+                physics: const ClampingScrollPhysics(),
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                            child: Text(
+                              'Сүүлээр сүүлээр олдсон ажлууд',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.textMuted,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          for (var i = 0; i < extractedTasks.length; i++) ...[
+                            _ExtractedTaskItem(task: extractedTasks[i]),
+                            if (i < extractedTasks.length - 1)
+                              Divider(
+                                height: 1,
+                                thickness: 1,
+                                color: Colors.black.withValues(alpha: 0.05),
+                              ),
+                          ],
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              onPressed: onAddExtractedTasks,
+                              icon: const Icon(Icons.add_rounded, size: 20),
+                              label: Text(
+                                'ажлууд нэмэх (${extractedTasks.length})',
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.primary,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                textStyle: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (suggestions.isNotEmpty) ...[
+                      Divider(
+                        height: 1,
+                        thickness: 1,
+                        color: Colors.black.withValues(alpha: 0.08),
+                      ),
+                      _buildSuggestionsList(),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     if (isLoading && suggestions.isEmpty) {
       return Material(
         color: Colors.transparent,
@@ -2839,83 +3014,146 @@ class _SuggestionPanel extends StatelessWidget {
         decoration: _panelDecoration(),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(18),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 320),
-            child: ListView.separated(
-              shrinkWrap: true,
-              padding: EdgeInsets.zero,
-              physics: const ClampingScrollPhysics(),
-              itemCount: suggestions.length,
-              separatorBuilder: (_, __) => Divider(
-                height: 1,
-                thickness: 1,
-                color: Colors.black.withValues(alpha: 0.05),
-              ),
-              itemBuilder: (context, index) {
-                final suggestion = suggestions[index];
-                return InkWell(
-                  onTap: () => onTap(suggestion),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 12,
+          child: _buildSuggestionsList(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSuggestionsList() {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 320),
+      child: ListView.separated(
+        shrinkWrap: true,
+        padding: EdgeInsets.zero,
+        physics: const ClampingScrollPhysics(),
+        itemCount: suggestions.length,
+        separatorBuilder: (_, __) => Divider(
+          height: 1,
+          thickness: 1,
+          color: Colors.black.withValues(alpha: 0.05),
+        ),
+        itemBuilder: (context, index) {
+          final suggestion = suggestions[index];
+          return InkWell(
+            onTap: () => onTap(suggestion),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              child: Row(
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Row(
+                    child: const Icon(
+                      Icons.location_on_rounded,
+                      color: AppColors.primary,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Container(
-                          width: 34,
-                          height: 34,
-                          decoration: BoxDecoration(
-                            color: AppColors.primary.withValues(alpha: 0.10),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: const Icon(
-                            Icons.location_on_rounded,
-                            color: AppColors.primary,
-                            size: 20,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                suggestion.mainText.isNotEmpty
-                                    ? suggestion.mainText
-                                    : suggestion.description,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 14.5,
-                                  fontWeight: FontWeight.w700,
-                                  color: AppColors.textDark,
-                                ),
-                              ),
-                              if (suggestion.secondaryText.isNotEmpty) ...[
-                                const SizedBox(height: 2),
-                                Text(
-                                  suggestion.secondaryText,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 12.5,
-                                    color: AppColors.textMuted,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ],
-                            ],
+                        Text(
+                          suggestion.mainText.isNotEmpty
+                              ? suggestion.mainText
+                              : suggestion.description,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textDark,
                           ),
                         ),
+                        if (suggestion.secondaryText.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            suggestion.secondaryText,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12.5,
+                              color: AppColors.textMuted,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
-                );
-              },
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ExtractedTaskItem extends StatelessWidget {
+  final ExtractedTaskModel task;
+
+  const _ExtractedTaskItem({required this.task});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(
+              Icons.auto_awesome_rounded,
+              color: AppColors.primary,
+              size: 18,
             ),
           ),
-        ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  task.taskName ?? 'Ажил',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textDark,
+                  ),
+                ),
+                if (task.organization != null &&
+                    task.organization!.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    task.organization!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      color: AppColors.textMuted,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
