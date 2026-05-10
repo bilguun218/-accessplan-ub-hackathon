@@ -6,5 +6,6 @@ const router = Router();
 
 router.get('/autocomplete', asyncHandler(ctrl.autocomplete));
 router.get('/place-details', asyncHandler(ctrl.placeDetails));
+router.get('/promotions-nearby', asyncHandler(ctrl.promotionsNearby));
 
 export default router;

@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import axios from 'axios';
 import { ApiError } from '../utils/ApiError';
+import { BusinessPost } from '../models/BusinessPost';
+import { Organization, IOrganization } from '../models/Organization';
 
 // Google Maps Legacy APIs
 const FIND_PLACE_URL =
@@ -156,4 +158,132 @@ export async function placeDetails(req: Request, res: Response) {
     }
     throw new ApiError(500, 'Дотоод алдаа гарлаа.');
   }
+}
+
+export async function promotionsNearby(req: Request, res: Response) {
+  const lat = numberQuery(req.query.lat);
+  const lng = numberQuery(req.query.lng);
+  const radius = numberQuery(req.query.radius) ?? 5;
+
+  if (lat === null || lng === null) {
+    throw ApiError.badRequest('lat and lng query parameters are required.');
+  }
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    throw ApiError.badRequest('Invalid coordinates.');
+  }
+  if (radius <= 0 || radius > 50) {
+    throw ApiError.badRequest('radius must be between 0 and 50 km.');
+  }
+
+  const organizations = await Organization.find({
+    status: 'active',
+    location: {
+      $near: {
+        $geometry: {
+          type: 'Point',
+          coordinates: [lng, lat],
+        },
+        $maxDistance: radius * 1000,
+      },
+    },
+  }).limit(100);
+
+  if (organizations.length === 0) {
+    res.json({ items: [] });
+    return;
+  }
+
+  const now = new Date();
+  const posts = await BusinessPost.find({
+    organizationId: { $in: organizations.map((org) => org._id) },
+    isActive: true,
+    showOnMap: true,
+    $and: [
+      { $or: [{ startsAt: null }, { startsAt: { $lte: now } }] },
+      { $or: [{ endsAt: null }, { endsAt: { $gte: now } }] },
+    ],
+  }).sort({ isSponsored: -1, updatedAt: -1 });
+
+  const postByOrganization = new Map<string, (typeof posts)[number]>();
+  for (const post of posts) {
+    const key = post.organizationId.toString();
+    if (!postByOrganization.has(key)) postByOrganization.set(key, post);
+  }
+
+  const items = organizations
+    .map((organization) => {
+      const post = postByOrganization.get(organization._id.toString());
+      if (!post) return null;
+      const [orgLng, orgLat] = organization.location.coordinates;
+      const distanceKmValue = distanceKm(lat, lng, orgLat, orgLng);
+      return {
+        organization: serializeMapOrganization(organization),
+        post: {
+          id: post._id.toString(),
+          organizationId: post.organizationId.toString(),
+          title: post.title,
+          description: post.description,
+          type: post.type,
+          imageUrl: post.imageUrl ?? null,
+          startsAt: post.startsAt ?? null,
+          endsAt: post.endsAt ?? null,
+          isActive: post.isActive,
+          showOnMap: post.showOnMap,
+          isSponsored: post.isSponsored,
+        },
+        distanceKm: distanceKmValue,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null)
+    .sort((a, b) => a.distanceKm - b.distanceKm)
+    .slice(0, 15);
+
+  res.json({ items });
+}
+
+function numberQuery(value: unknown): number | null {
+  if (typeof value !== 'string') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function serializeMapOrganization(org: IOrganization) {
+  const [longitude, latitude] = org.location.coordinates;
+  return {
+    id: org._id.toString(),
+    businessName: org.businessName,
+    branchName: org.branchName ?? null,
+    serviceType: org.serviceType,
+    address: org.address,
+    latitude,
+    longitude,
+    phone: org.phone ?? null,
+    parkingAvailable: org.parkingAvailable,
+    accessibilityAvailable: org.accessibilityAvailable,
+    digitalServicesAvailable: org.digitalServicesAvailable,
+    isVerified: org.isVerified,
+  };
+}
+
+function distanceKm(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number
+) {
+  const earthRadiusKm = 6371;
+  const dLat = toRadians(lat2 - lat1);
+  const dLng = toRadians(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRadians(lat1)) *
+      Math.cos(toRadians(lat2)) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.round(earthRadiusKm * c * 100) / 100;
+}
+
+function toRadians(value: number) {
+  return (value * Math.PI) / 180;
 }

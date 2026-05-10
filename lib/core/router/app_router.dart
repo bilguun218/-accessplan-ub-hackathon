@@ -7,6 +7,9 @@ import '../../features/auth/presentation/screens/login_screen.dart';
 import '../../features/auth/presentation/screens/register_screen.dart';
 import '../../features/auth/presentation/screens/reset_password_screen.dart';
 import '../../features/auth/presentation/screens/splash_screen.dart';
+import '../../features/business/presentation/screens/business_shell_screen.dart';
+import '../../features/business/presentation/screens/organization_info_screen.dart';
+import '../../features/business/presentation/screens/organization_request_screen.dart';
 import '../../features/home/presentation/screens/main_shell_screen.dart';
 import '../../features/home/presentation/screens/placeholder_screen.dart';
 import '../../features/map/presentation/screens/map_screen.dart';
@@ -29,6 +32,7 @@ class AppRouter {
         final isAuthRoute =
             loc == '/login' ||
             loc == '/register' ||
+            loc == '/organization-request' ||
             loc == '/forgot-password' ||
             loc.startsWith('/reset-password');
 
@@ -38,22 +42,25 @@ class AppRouter {
         }
 
         // unauthenticated — restrict protected routes
-        const protected = {
-          '/home',
-          '/planner',
-          '/map',
-          '/reports',
-          '/profile',
-          '/organizations',
-          '/tasks/add',
-        };
-        if (protected.contains(loc) || loc == '/') return '/login';
+        final protected =
+            loc == '/home' ||
+            loc == '/planner' ||
+            loc == '/map' ||
+            loc == '/reports' ||
+            loc == '/profile' ||
+            loc == '/organizations' ||
+            loc == '/tasks/add';
+        if (protected || loc == '/') return '/login';
         return null;
       },
       routes: [
         GoRoute(path: '/', builder: (_, __) => const SplashScreen()),
         GoRoute(path: '/login', builder: (_, __) => const LoginScreen()),
         GoRoute(path: '/register', builder: (_, __) => const RegisterScreen()),
+        GoRoute(
+          path: '/organization-request',
+          builder: (_, __) => const OrganizationRequestScreen(),
+        ),
         GoRoute(
           path: '/forgot-password',
           builder: (_, __) => const ForgotPasswordScreen(),
@@ -64,6 +71,14 @@ class AppRouter {
               ResetPasswordScreen(token: state.uri.queryParameters['token']),
         ),
         GoRoute(path: '/home', builder: (_, __) => const MainShellScreen()),
+        GoRoute(
+          path: '/business',
+          builder: (_, __) => const BusinessShellScreen(),
+        ),
+        GoRoute(
+          path: '/business/info',
+          builder: (_, __) => const OrganizationInfoScreen(),
+        ),
         GoRoute(path: '/tasks/add', builder: (_, __) => const AddTaskScreen()),
         GoRoute(
           path: '/planner',
@@ -73,10 +88,7 @@ class AppRouter {
             icon: Icons.checklist_rtl,
           ),
         ),
-        GoRoute(
-          path: '/map',
-          builder: (_, __) => const MapScreen(),
-        ),
+        GoRoute(path: '/map', builder: (_, __) => const MapScreen()),
         GoRoute(
           path: '/reports',
           builder: (_, __) => const PlaceholderScreen(

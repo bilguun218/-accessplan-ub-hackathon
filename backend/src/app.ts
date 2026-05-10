@@ -6,6 +6,7 @@ import mapsRoutes from './routes/maps.routes';
 import aiRoutes from './routes/ai.routes';
 import progressRoutes from './routes/progress.routes';
 import organizationsRoutes from './routes/organizations.routes';
+import postsRoutes from './routes/posts.routes';
 import { errorHandler, notFoundHandler } from './middleware/error.middleware';
 import { generalLimiter } from './middleware/rateLimit.middleware';
 
@@ -26,6 +27,7 @@ export function createApp() {
   app.use('/api/ai', aiRoutes);
   app.use('/api/progress', progressRoutes);
   app.use('/api/organizations', organizationsRoutes);
+  app.use('/api/posts', postsRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/utils/validators.dart';
 import '../providers/auth_provider.dart';
+import '../widgets/auth_background.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -17,7 +18,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
-  bool _obscurePassword = true;
+  var _userType = 'organization';
 
   @override
   void dispose() {
@@ -27,9 +28,17 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _submit() async {
+    if (_userType == 'organization') {
+      context.go('/business');
+      return;
+    }
     if (!_formKey.currentState!.validate()) return;
     final auth = context.read<AuthProvider>();
-    final ok = await auth.login(_emailCtrl.text.trim(), _passwordCtrl.text);
+    final ok = await auth.login(
+      _emailCtrl.text.trim(),
+      _passwordCtrl.text,
+      userType: _userType,
+    );
     if (!mounted) return;
     if (ok) {
       context.go('/home');
@@ -40,182 +49,150 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     return Scaffold(
-      backgroundColor: AppColors.background,
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 76, 24, 28),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text(
-                  'AccessPlan UB',
-                  style: TextStyle(
-                    color: AppColors.textDark,
-                    fontSize: 24,
-                    fontWeight: FontWeight.w900,
+      body: AuthBackground(
+        child: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(24, 72, 24, 28),
+            child: Form(
+              key: _formKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    'AccessPlan UB',
+                    style: TextStyle(
+                      color: Colors.black,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 54),
-                const Text(
-                  'Нэвтрэх',
-                  style: TextStyle(
-                    color: AppColors.textDark,
-                    fontSize: 36,
-                    height: 1.05,
-                    fontWeight: FontWeight.w900,
+                  const SizedBox(height: 54),
+                  const Text(
+                    'Нэвтрэх',
+                    style: TextStyle(
+                      color: Colors.black,
+                      fontSize: 36,
+                      height: 1.05,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 10),
-                const Text(
-                  'Хувийн төлөвлөгөөгөө үргэлжлүүлээрэй',
-                  style: TextStyle(
-                    color: AppColors.textMuted,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 28),
-                _LoginInput(
-                  label: 'Имэйл',
-                  hint: 'name@example.mn',
-                  controller: _emailCtrl,
-                  keyboardType: TextInputType.emailAddress,
-                  textInputAction: TextInputAction.next,
-                  validator: Validators.email,
-                ),
-                const SizedBox(height: 16),
-                _LoginInput(
-                  label: 'Нууц үг',
-                  hint: '••••••••',
-                  controller: _passwordCtrl,
-                  obscureText: _obscurePassword,
-                  validator: Validators.loginPassword,
-                  textInputAction: TextInputAction.done,
-                  suffix: IconButton(
-                    onPressed: () =>
-                        setState(() => _obscurePassword = !_obscurePassword),
-                    icon: Icon(
-                      _obscurePassword
-                          ? Icons.visibility_off_outlined
-                          : Icons.visibility_outlined,
+                  const SizedBox(height: 10),
+                  Text(
+                    _userType == 'organization'
+                        ? 'Байгууллагаа сурталчлах боломж'
+                        : 'Хувийн төлөвлөгөөгөө үргэлжлүүлээрэй',
+                    style: const TextStyle(
                       color: AppColors.textMuted,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                ),
-                const SizedBox(height: 24),
-                const Text(
-                  'Хэрэглэгчийн төрөл',
-                  style: TextStyle(
-                    color: AppColors.primary,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
+                  const SizedBox(height: 26),
+                  _LoginField(
+                    label: 'Имэйл',
+                    hint: 'name@example.mn',
+                    controller: _emailCtrl,
+                    keyboardType: TextInputType.emailAddress,
+                    textInputAction: TextInputAction.next,
+                    validator: Validators.email,
                   ),
-                ),
-                const SizedBox(height: 12),
-                const Row(
-                  children: [
-                    Expanded(
-                      child: _UserTypePill(
-                        label: 'Энгийн хэрэглэгч',
-                        selected: true,
-                      ),
-                    ),
-                    SizedBox(width: 10),
-                    Expanded(child: _UserTypePill(label: 'Байгууллага')),
-                  ],
-                ),
-                if (auth.errorMessage != null) ...[
-                  const SizedBox(height: 18),
-                  _ErrorBanner(message: auth.errorMessage!),
-                ],
-                const SizedBox(height: 28),
-                SizedBox(
-                  height: 58,
-                  child: ElevatedButton(
-                    onPressed: auth.isLoading ? null : _submit,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                      disabledBackgroundColor: AppColors.primary.withValues(
-                        alpha: 0.55,
-                      ),
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(22),
-                      ),
-                      textStyle: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    child: auth.isLoading
-                        ? const SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2.4,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Text('Нэвтрэх'),
+                  const SizedBox(height: 16),
+                  _LoginField(
+                    label: 'Нууц үг',
+                    hint: '••••••••',
+                    controller: _passwordCtrl,
+                    obscureText: true,
+                    validator: Validators.loginPassword,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => auth.isLoading ? null : _submit(),
                   ),
-                ),
-                const SizedBox(height: 16),
-                TextButton(
-                  onPressed: auth.isLoading
-                      ? null
-                      : () => context.push('/forgot-password'),
-                  child: const Text(
-                    'Нууц үг мартсан?',
+                  const SizedBox(height: 24),
+                  const Text(
+                    'Хэрэглэгчийн төрөл',
                     style: TextStyle(
                       color: AppColors.primary,
                       fontSize: 16,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
-                ),
-                const SizedBox(height: 26),
-                Container(
-                  padding: const EdgeInsets.fromLTRB(22, 22, 22, 24),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: AppColors.border),
-                  ),
-                  child: const Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  const SizedBox(height: 12),
+                  Row(
                     children: [
-                      Text(
-                        'Яагаад AccessPlan UB?',
-                        style: TextStyle(
-                          color: AppColors.textDark,
-                          fontSize: 20,
+                      Expanded(
+                        child: _UserTypePill(
+                          label: 'Энгийн хэрэглэгч',
+                          selected: _userType == 'general',
+                          onTap: () => setState(() => _userType = 'general'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _UserTypePill(
+                          label: 'Байгууллага',
+                          selected: _userType == 'organization',
+                          onTap: () {
+                            setState(() => _userType = 'organization');
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (auth.errorMessage != null) ...[
+                    const SizedBox(height: 18),
+                    _ErrorBanner(message: auth.errorMessage!),
+                  ],
+                  const SizedBox(height: 28),
+                  SizedBox(
+                    height: 58,
+                    child: ElevatedButton(
+                      onPressed: auth.isLoading ? null : _submit,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        disabledBackgroundColor: AppColors.primary.withValues(
+                          alpha: 0.55,
+                        ),
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize: 18,
                           fontWeight: FontWeight.w900,
                         ),
                       ),
-                      SizedBox(height: 16),
-                      _ReasonLine('Онлайн хийх боломжтой ажлыг ялгана'),
-                      _ReasonLine('Очих маршрутыг оновчтой төлөвлөнө'),
-                      _ReasonLine('Хотын саад, асуудлыг мэдээлж болно'),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextButton(
-                  onPressed: auth.isLoading
-                      ? null
-                      : () => context.push('/register'),
-                  child: const Text(
-                    'Бүртгэл үүсгэх',
-                    style: TextStyle(
-                      color: AppColors.primary,
-                      fontWeight: FontWeight.w800,
+                      child: auth.isLoading
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.4,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Text('Нэвтрэх'),
                     ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 14),
+                  TextButton(
+                    onPressed: auth.isLoading
+                        ? null
+                        : () => context.push('/forgot-password'),
+                    child: const Text(
+                      'Нууц үг мартсан?',
+                      style: TextStyle(
+                        color: AppColors.primary,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 22),
+                  _OrganizationRequestCard(
+                    onTap: () => context.push('/organization-request'),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -224,7 +201,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-class _LoginInput extends StatelessWidget {
+class _LoginField extends StatelessWidget {
   final String label;
   final String hint;
   final TextEditingController controller;
@@ -232,9 +209,9 @@ class _LoginInput extends StatelessWidget {
   final TextInputAction? textInputAction;
   final String? Function(String?)? validator;
   final bool obscureText;
-  final Widget? suffix;
+  final ValueChanged<String>? onSubmitted;
 
-  const _LoginInput({
+  const _LoginField({
     required this.label,
     required this.hint,
     required this.controller,
@@ -242,17 +219,17 @@ class _LoginInput extends StatelessWidget {
     this.textInputAction,
     this.validator,
     this.obscureText = false,
-    this.suffix,
+    this.onSubmitted,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 12, 16, 10),
+      padding: const EdgeInsets.fromLTRB(18, 10, 18, 8),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Colors.white.withValues(alpha: 0.94),
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: AppColors.border),
+        border: Border.all(color: const Color(0xFFD7E3EF), width: 1.3),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -271,21 +248,21 @@ class _LoginInput extends StatelessWidget {
             textInputAction: textInputAction,
             validator: validator,
             obscureText: obscureText,
+            onFieldSubmitted: onSubmitted,
             style: const TextStyle(
               color: AppColors.textDark,
               fontSize: 18,
-              fontWeight: FontWeight.w500,
+              fontWeight: FontWeight.w600,
             ),
             decoration: InputDecoration(
               isDense: true,
               hintText: hint,
               hintStyle: const TextStyle(
-                color: AppColors.textMuted,
-                fontWeight: FontWeight.w500,
+                color: Color(0xFF718096),
+                fontWeight: FontWeight.w600,
               ),
-              suffixIcon: suffix,
               border: InputBorder.none,
-              contentPadding: EdgeInsets.zero,
+              contentPadding: const EdgeInsets.only(top: 7, bottom: 1),
             ),
           ),
         ],
@@ -297,70 +274,145 @@ class _LoginInput extends StatelessWidget {
 class _UserTypePill extends StatelessWidget {
   final String label;
   final bool selected;
+  final VoidCallback onTap;
 
-  const _UserTypePill({required this.label, this.selected = false});
+  const _UserTypePill({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      alignment: Alignment.center,
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 13),
-      decoration: BoxDecoration(
-        color: selected ? AppColors.primary : Colors.white,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(
-          color: selected ? AppColors.primary : AppColors.border,
-          width: 1.2,
-        ),
-      ),
-      child: Text(
-        label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          color: selected ? Colors.white : AppColors.textDark,
-          fontSize: 14.5,
-          fontWeight: FontWeight.w900,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.primary : Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: AppColors.primary.withValues(alpha: 0.18),
+                      blurRadius: 14,
+                      offset: const Offset(0, 7),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: selected ? Colors.white : AppColors.textDark,
+              fontSize: 13.5,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
         ),
       ),
     );
   }
 }
 
-class _ReasonLine extends StatelessWidget {
-  final String text;
+class _OrganizationRequestCard extends StatelessWidget {
+  final VoidCallback onTap;
 
-  const _ReasonLine(this.text);
+  const _OrganizationRequestCard({required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '•',
-            style: TextStyle(
-              color: AppColors.textMuted,
-              fontSize: 20,
-              height: 1.1,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              text,
-              style: const TextStyle(
-                color: AppColors.textMuted,
-                fontSize: 17,
-                height: 1.28,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(24),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 18, 14, 18),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.96),
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 20,
+                offset: const Offset(0, 10),
               ),
-            ),
+            ],
           ),
-        ],
+          child: Row(
+            children: [
+              Container(
+                width: 50,
+                height: 50,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFEAF3FF),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.business_rounded,
+                  color: AppColors.primary,
+                  size: 27,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Байгууллага бүртгүүлэх\nхүсэлт илгээх',
+                      style: TextStyle(
+                        color: Color(0xFF374151),
+                        fontSize: 17,
+                        height: 1.20,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    SizedBox(height: 6),
+                    Text(
+                      'Баталгаажсаны дараа бизнесийн эрх нээгдэнэ',
+                      style: TextStyle(
+                        color: Color(0xFF9AA3B2),
+                        fontSize: 13.5,
+                        height: 1.25,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Илгээх',
+                    style: TextStyle(
+                      color: AppColors.primary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  SizedBox(width: 4),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: AppColors.primary,
+                    size: 24,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

@@ -9,6 +9,8 @@ import 'core/storage/secure_storage_service.dart';
 import 'features/auth/data/repositories/auth_repository_impl.dart';
 import 'features/auth/data/services/auth_api_service.dart';
 import 'features/auth/presentation/providers/auth_provider.dart';
+import 'features/business/data/services/business_api_service.dart';
+import 'features/business/presentation/providers/business_provider.dart';
 
 class AccessPlanApp extends StatefulWidget {
   const AccessPlanApp({super.key});
@@ -19,6 +21,7 @@ class AccessPlanApp extends StatefulWidget {
 
 class _AccessPlanAppState extends State<AccessPlanApp> {
   late final AuthProvider _authProvider;
+  late final BusinessProvider _businessProvider;
   late final GoRouter _router;
 
   @override
@@ -35,14 +38,23 @@ class _AccessPlanAppState extends State<AccessPlanApp> {
     final api = AuthApiService(apiClient);
     final repo = AuthRepositoryImpl(api: api, storage: storage);
     _authProvider = AuthProvider(repo);
+    _businessProvider = BusinessProvider(
+      api: BusinessApiService(apiClient),
+      storage: storage,
+    )..load();
     providerRef = _authProvider;
     _router = AppRouter.create(_authProvider);
   }
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider<AuthProvider>.value(
-      value: _authProvider,
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider<AuthProvider>.value(value: _authProvider),
+        ChangeNotifierProvider<BusinessProvider>.value(
+          value: _businessProvider,
+        ),
+      ],
       child: MaterialApp.router(
         title: AppStrings.appName,
         debugShowCheckedModeBanner: false,
@@ -50,6 +62,13 @@ class _AccessPlanAppState extends State<AccessPlanApp> {
         routerConfig: _router,
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _authProvider.dispose();
+    _businessProvider.dispose();
+    super.dispose();
   }
 
   ThemeData _buildTheme() {

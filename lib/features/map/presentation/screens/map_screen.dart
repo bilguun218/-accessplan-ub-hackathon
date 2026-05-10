@@ -8,12 +8,17 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../../../../core/constants/app_colors.dart';
 import '../../../tasks/data/models/standard_task.dart';
+import '../../../organizations/data/models/business_post.dart';
+import '../../../organizations/data/models/map_promotion_item.dart';
+import '../../../organizations/data/services/mock_business_post_service.dart';
 import '../../data/models/place_detail_model.dart';
 import '../../data/models/place_prediction_model.dart';
 import '../../data/models/route_segment.dart';
 import '../../data/services/map_api_service.dart';
 import '../../data/services/place_geocoding_service.dart';
 import '../../data/services/segment_route_service.dart';
+import '../utils/business_marker_factory.dart';
+import '../widgets/promotion_preview_bottom_sheet.dart';
 import '_route_summary_panel.dart';
 
 class MapScreen extends StatefulWidget {
@@ -55,6 +60,8 @@ class _MapScreenState extends State<MapScreen> {
   final MapApiService _mapApiService = MapApiService();
   final PlaceGeocodingService _geocodingService = PlaceGeocodingService();
   final SegmentRouteService _segmentRouteService = SegmentRouteService();
+  final MockBusinessPostService _mockBusinessPostService =
+      MockBusinessPostService();
 
   GoogleMapController? _controller;
   Timer? _searchDebounce;
@@ -62,6 +69,8 @@ class _MapScreenState extends State<MapScreen> {
 
   BitmapDescriptor? _liveLocationIcon;
   BitmapDescriptor? _startPointIcon;
+  BitmapDescriptor? _giftMarkerIcon;
+  BitmapDescriptor? _sponsoredGiftMarkerIcon;
   Marker? _liveLocationMarker;
   Marker? _startPointMarker;
 
@@ -69,6 +78,7 @@ class _MapScreenState extends State<MapScreen> {
   String? _errorMessage;
 
   bool _trafficEnabled = true;
+  bool _showPromotions = true;
   bool _isSearching = false;
   bool _isLoadingPlace = false;
 
@@ -79,6 +89,7 @@ class _MapScreenState extends State<MapScreen> {
   PlaceDetailModel? _selectedPlace;
 
   Set<Marker> _markers = <Marker>{};
+  List<MapPromotionItem> _mapPromotions = <MapPromotionItem>[];
 
   // Task-driven route state
   List<RouteSegment> _segments = <RouteSegment>[];
@@ -92,9 +103,17 @@ class _MapScreenState extends State<MapScreen> {
   late Set<String> _savedTaskIds;
   late Set<String> _completedTaskIds;
   List<StandardTask> _routableTasks = <StandardTask>[];
+  List<StandardTask> _promotionTasks = <StandardTask>[];
 
   late CameraPosition _initialCameraPosition;
   bool _locationLoaded = false;
+
+  List<StandardTask> get _activeRouteTasks => [
+    ...widget.tasks,
+    ..._promotionTasks,
+  ];
+
+  bool get _hasRouteTasks => _activeRouteTasks.isNotEmpty;
 
   @override
   void initState() {
@@ -107,6 +126,7 @@ class _MapScreenState extends State<MapScreen> {
       zoom: _defaultZoom,
     );
     _prepareLocationIcons();
+    _initPromotionMarkerIcons();
     _initLocation();
   }
 
@@ -124,10 +144,9 @@ class _MapScreenState extends State<MapScreen> {
     }
 
     if (tasksChanged) {
+      _promotionTasks = <StandardTask>[];
       _clearRouteState();
-      if (widget.tasks.isNotEmpty &&
-          _currentLatLng != null &&
-          !_isBuildingRoute) {
+      if (_hasRouteTasks && _currentLatLng != null && !_isBuildingRoute) {
         unawaited(_buildRouteForTasks());
       }
     }
@@ -170,9 +189,10 @@ class _MapScreenState extends State<MapScreen> {
       _placeRoutePolylines = <Polyline>{};
       _taskMarkers = <Marker>{};
       _routableTasks = <StandardTask>[];
+      _mapPromotions = <MapPromotionItem>[];
       _focusedSegmentIndex = null;
       _routeErrorMessage = null;
-      if (widget.tasks.isEmpty) {
+      if (!_hasRouteTasks) {
         _startPointMarker = null;
       }
     });
@@ -198,6 +218,21 @@ class _MapScreenState extends State<MapScreen> {
       if (_currentLatLng != null) {
         _liveLocationMarker = _makeLiveLocationMarker(_currentLatLng!);
       }
+    });
+  }
+
+  Future<void> _initPromotionMarkerIcons() async {
+    final gift = await BusinessMarkerFactory.createGiftMarker(
+      type: BusinessPostType.promotion,
+    );
+    final sponsored = await BusinessMarkerFactory.createGiftMarker(
+      type: BusinessPostType.promotion,
+      isSponsored: true,
+    );
+    if (!mounted) return;
+    setState(() {
+      _giftMarkerIcon = gift;
+      _sponsoredGiftMarkerIcon = sponsored;
     });
   }
 
@@ -382,7 +417,7 @@ class _MapScreenState extends State<MapScreen> {
 
       await _animateTo(currentLatLng, zoom: 16);
 
-      if (widget.tasks.isNotEmpty && _segments.isEmpty && !_isBuildingRoute) {
+      if (_hasRouteTasks && _segments.isEmpty && !_isBuildingRoute) {
         unawaited(_buildRouteForTasks());
       }
     } catch (e) {
@@ -406,7 +441,8 @@ class _MapScreenState extends State<MapScreen> {
 
   Future<void> _buildRouteForTasks() async {
     final origin = _currentLatLng;
-    if (origin == null || widget.tasks.isEmpty) return;
+    final routeTasks = _activeRouteTasks;
+    if (origin == null || routeTasks.isEmpty) return;
 
     setState(() {
       _isBuildingRoute = true;
@@ -421,7 +457,7 @@ class _MapScreenState extends State<MapScreen> {
 
     final resolved = <StandardTask>[];
     final addresses = <String, String>{};
-    for (final t in widget.tasks) {
+    for (final t in routeTasks) {
       if (t.lat != null && t.lng != null) {
         resolved.add(t);
         continue;
@@ -544,6 +580,8 @@ class _MapScreenState extends State<MapScreen> {
       _taskMarkers = markers;
       _isBuildingRoute = false;
     });
+
+    unawaited(_loadRouteMockPromotions(segments: segments, origin: origin));
 
     await _fitBounds(origin, segments);
   }
@@ -697,6 +735,9 @@ class _MapScreenState extends State<MapScreen> {
 
   StandardTask? _taskForSegment(RouteSegment segment) {
     for (final task in _routableTasks) {
+      if (task.id == segment.taskId) return task;
+    }
+    for (final task in _promotionTasks) {
       if (task.id == segment.taskId) return task;
     }
     for (final task in widget.tasks) {
@@ -1231,6 +1272,392 @@ class _MapScreenState extends State<MapScreen> {
     ], padding: 110);
   }
 
+  Future<void> _loadRouteMockPromotions({
+    List<RouteSegment>? segments,
+    LatLng? origin,
+  }) async {
+    final routeSegments = segments ?? _segments;
+    if (routeSegments.isEmpty) {
+      if (!mounted) return;
+      setState(() => _mapPromotions = <MapPromotionItem>[]);
+      return;
+    }
+
+    final samplePoints = _routePromotionSamplePoints(
+      routeSegments,
+      origin: origin ?? _startPointMarker?.position ?? _currentLatLng,
+    );
+    if (samplePoints.isEmpty) return;
+
+    try {
+      final byPost = <String, MapPromotionItem>{};
+      for (final point in samplePoints) {
+        final nearby = await _mockBusinessPostService.getActiveMapPromotions(
+          lat: point.latitude,
+          lng: point.longitude,
+          radiusKm: 1.4,
+        );
+        for (final item in nearby) {
+          final key = item.post.id;
+          final existing = byPost[key];
+          if (existing == null ||
+              (item.distanceKm ?? double.infinity) <
+                  (existing.distanceKm ?? double.infinity)) {
+            byPost[key] = item;
+          }
+        }
+      }
+
+      final items = byPost.values.toList(growable: false)
+        ..sort((a, b) {
+          final sponsored = b.post.isSponsored.toString().compareTo(
+            a.post.isSponsored.toString(),
+          );
+          if (sponsored != 0) return sponsored;
+          return (a.distanceKm ?? double.infinity).compareTo(
+            b.distanceKm ?? double.infinity,
+          );
+        });
+
+      if (!mounted) return;
+      setState(() {
+        _mapPromotions = items.take(15).toList(growable: false);
+      });
+    } catch (e) {
+      debugPrint('Failed to load route mock promotions: $e');
+    }
+  }
+
+  List<LatLng> _routePromotionSamplePoints(
+    List<RouteSegment> segments, {
+    LatLng? origin,
+  }) {
+    final points = <LatLng>[];
+
+    void addPoint(LatLng point) {
+      final duplicate = points.any(
+        (existing) =>
+            (existing.latitude - point.latitude).abs() < 0.00001 &&
+            (existing.longitude - point.longitude).abs() < 0.00001,
+      );
+      if (!duplicate) points.add(point);
+    }
+
+    if (origin != null) addPoint(origin);
+    for (final segment in segments) {
+      addPoint(segment.fromLatLng);
+      final polyline = segment.polyline;
+      if (polyline.isEmpty) {
+        addPoint(segment.toLatLng);
+        continue;
+      }
+
+      final stride = (polyline.length / 6)
+          .ceil()
+          .clamp(1, polyline.length)
+          .toInt();
+      for (var i = 0; i < polyline.length; i += stride) {
+        addPoint(polyline[i]);
+      }
+      addPoint(polyline.last);
+      addPoint(segment.toLatLng);
+    }
+
+    if (points.length <= 36) return points;
+    final stride = (points.length / 36).ceil();
+    final sampled = <LatLng>[
+      for (var i = 0; i < points.length; i += stride) points[i],
+    ];
+    final sampledLast = sampled.last;
+    final routeLast = points.last;
+    final hasRouteEnd =
+        (sampledLast.latitude - routeLast.latitude).abs() < 0.00001 &&
+        (sampledLast.longitude - routeLast.longitude).abs() < 0.00001;
+    if (!hasRouteEnd) sampled.add(routeLast);
+    return sampled;
+  }
+
+  Set<Marker> _promotionMarkers() {
+    if (!_showPromotions || _giftMarkerIcon == null) return <Marker>{};
+    return {
+      for (final item in _mapPromotions)
+        Marker(
+          markerId: MarkerId('promotion_${item.post.id}'),
+          position: LatLng(item.latitude, item.longitude),
+          icon: item.post.isSponsored && _sponsoredGiftMarkerIcon != null
+              ? _sponsoredGiftMarkerIcon!
+              : _giftMarkerIcon!,
+          anchor: const Offset(0.5, 0.5),
+          zIndexInt: item.post.isSponsored ? 5 : 4,
+          infoWindow: InfoWindow(
+            title: item.post.title,
+            snippet: item.businessName,
+          ),
+          onTap: () => _showPromotionPreview(item),
+        ),
+    };
+  }
+
+  void _showPromotionPreview(MapPromotionItem item) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) {
+        return PromotionPreviewBottomSheet(
+          item: item,
+          onViewDetails: () {
+            Navigator.pop(context);
+            _showPromotionDetailsDialog(item);
+          },
+          onAddToRoute: () {
+            Navigator.pop(context);
+            _addPromotionToRoute(item);
+          },
+        );
+      },
+    );
+  }
+
+  void _showPromotionDetailsDialog(MapPromotionItem item) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return SafeArea(
+          top: false,
+          child: Container(
+            margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(26),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.16),
+                  blurRadius: 24,
+                  offset: const Offset(0, 10),
+                ),
+              ],
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 42,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFD9DEE7),
+                        borderRadius: BorderRadius.circular(99),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    item.branchName == null
+                        ? item.businessName
+                        : '${item.businessName} · ${item.branchName}',
+                    style: const TextStyle(
+                      color: AppColors.textDark,
+                      fontSize: 20,
+                      height: 1.15,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      _PromotionDetailBadge(
+                        businessPostTypeLabel(item.post.type),
+                        _promotionTypeColor(item.post.type),
+                      ),
+                      _PromotionDetailBadge(
+                        item.serviceType,
+                        AppColors.primary,
+                      ),
+                      if (item.post.isSponsored)
+                        const _PromotionDetailBadge(
+                          'Онцлох',
+                          Color(0xFFF59E0B),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    item.post.title,
+                    style: const TextStyle(
+                      color: AppColors.textDark,
+                      fontSize: 18,
+                      height: 1.2,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    item.post.description,
+                    style: const TextStyle(
+                      color: AppColors.textMuted,
+                      fontSize: 14,
+                      height: 1.42,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  _PromotionDetailRow(
+                    label: 'Хаяг',
+                    value: item.address,
+                    icon: Icons.place_outlined,
+                  ),
+                  if (item.distanceText != null)
+                    _PromotionDetailRow(
+                      label: 'Зай',
+                      value: item.distanceText!,
+                      icon: Icons.near_me_outlined,
+                    ),
+                  _PromotionDetailRow(
+                    label: 'Хүчинтэй хугацаа',
+                    value: _promotionDateRange(item.post),
+                    icon: Icons.calendar_today_outlined,
+                  ),
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _addPromotionToRoute(item);
+                          },
+                          icon: const Icon(Icons.alt_route_rounded, size: 18),
+                          label: const Text('Маршрут нэмэх'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            padding: const EdgeInsets.symmetric(vertical: 13),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            textStyle: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(context),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.textDark,
+                            side: const BorderSide(color: AppColors.border),
+                            padding: const EdgeInsets.symmetric(vertical: 13),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            textStyle: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          child: const Text('Хаах'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _addPromotionToRoute(MapPromotionItem item) async {
+    final taskId = 'promotion_${item.organizationId}';
+    if (_activeRouteTasks.any((task) => task.id == taskId)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Аль хэдийн маршрутад нэмэгдсэн'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    if (_currentLatLng == null) {
+      await _goToCurrentLocation();
+      if (!mounted) return;
+      if (_currentLatLng == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Одоогийн байршил олдсонгүй.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        return;
+      }
+    }
+
+    final task = StandardTask(
+      id: taskId,
+      order: _activeRouteTasks.length + 1,
+      title: item.businessName,
+      category: item.serviceType,
+      locationText: item.businessName,
+      timeText: 'Өнөөдөр',
+      priority: StandardTaskPriority.medium,
+      needsPlaceSearch: false,
+      placeSearchQuery: item.businessName,
+      source: TaskSource.manual,
+      lat: item.latitude,
+      lng: item.longitude,
+      notes: '${item.post.title}\n${item.post.description}',
+    );
+
+    setState(() {
+      _promotionTasks = [..._promotionTasks, task];
+      _selectedPlace = null;
+      _placeRoutePolylines = <Polyline>{};
+    });
+
+    await _buildRouteForTasks();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Маршрутад нэмэгдлээ'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  void _togglePromotions() {
+    setState(() {
+      _showPromotions = !_showPromotions;
+    });
+    if (_showPromotions && _segments.isNotEmpty && _mapPromotions.isEmpty) {
+      unawaited(_loadRouteMockPromotions());
+    }
+  }
+
+  String _promotionDateRange(BusinessPost post) {
+    final start = post.startsAt == null ? 'Одоо' : _formatDate(post.startsAt!);
+    final end = post.endsAt == null ? 'Хугацаагүй' : _formatDate(post.endsAt!);
+    return '$start - $end';
+  }
+
+  String _formatDate(DateTime date) {
+    return '${date.year}.${date.month.toString().padLeft(2, '0')}.${date.day.toString().padLeft(2, '0')}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final viewPadding = MediaQuery.of(context).padding;
@@ -1238,10 +1665,10 @@ class _MapScreenState extends State<MapScreen> {
     final showSuggestionPanel =
         _suggestions.isNotEmpty || _isSearching || _errorMessage != null;
     final canSelectPlace = widget.enablePlaceSelection;
-    final selectedPlaceBottom = widget.tasks.isNotEmpty
+    final selectedPlaceBottom = _hasRouteTasks
         ? 360.0
         : (widget.reserveBottomNavSpace ? 118.0 : 24.0);
-    final selectedPlaceMaxHeight = widget.tasks.isNotEmpty
+    final selectedPlaceMaxHeight = _hasRouteTasks
         ? 330.0
         : MediaQuery.sizeOf(context).height * (canSelectPlace ? 0.62 : 0.54);
 
@@ -1256,6 +1683,7 @@ class _MapScreenState extends State<MapScreen> {
             markers: {
               ..._markers,
               ..._taskMarkers,
+              ..._promotionMarkers(),
               if (_startPointMarker != null) _startPointMarker!,
               if (_liveLocationMarker != null) _liveLocationMarker!,
             },
@@ -1279,6 +1707,10 @@ class _MapScreenState extends State<MapScreen> {
 
               if (!_controllerCompleter.isCompleted) {
                 _controllerCompleter.complete(controller);
+              }
+
+              if (_segments.isNotEmpty && _mapPromotions.isEmpty) {
+                unawaited(_loadRouteMockPromotions());
               }
             },
           ),
@@ -1346,7 +1778,27 @@ class _MapScreenState extends State<MapScreen> {
 
                 const SizedBox(height: 10),
 
-                if (widget.tasks.isNotEmpty)
+                _MapFloatingButton(
+                  icon: _showPromotions
+                      ? Icons.card_giftcard_rounded
+                      : Icons.card_giftcard_outlined,
+                  tooltip: 'Урамшуулал',
+                  isActive: _showPromotions,
+                  onTap: _togglePromotions,
+                ),
+
+                const SizedBox(height: 10),
+
+                _MapFloatingButton(
+                  icon: Icons.refresh_rounded,
+                  tooltip: 'Урамшуулал шинэчлэх',
+                  isActive: false,
+                  onTap: () => unawaited(_loadRouteMockPromotions()),
+                ),
+
+                const SizedBox(height: 10),
+
+                if (_hasRouteTasks)
                   _MapFloatingButton(
                     icon: _isBuildingRoute
                         ? Icons.hourglass_top_rounded
@@ -1359,7 +1811,7 @@ class _MapScreenState extends State<MapScreen> {
             ),
           ),
 
-          if (widget.tasks.isNotEmpty)
+          if (_hasRouteTasks)
             Positioned.fill(
               child: RouteSummaryPanel(
                 segments: _segments,
@@ -2072,6 +2524,106 @@ class _MapTypeOption extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _PromotionDetailBadge extends StatelessWidget {
+  final String label;
+  final Color color;
+
+  const _PromotionDetailBadge(this.label, this.color);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.11),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 12,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+}
+
+class _PromotionDetailRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final IconData icon;
+
+  const _PromotionDetailRow({
+    required this.label,
+    required this.value,
+    required this.icon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.09),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: Icon(icon, color: AppColors.primary, size: 18),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: AppColors.textMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    color: AppColors.textDark,
+                    fontSize: 14,
+                    height: 1.3,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+Color _promotionTypeColor(BusinessPostType type) {
+  switch (type) {
+    case BusinessPostType.discount:
+      return const Color(0xFFD97706);
+    case BusinessPostType.event:
+      return const Color(0xFF9333EA);
+    case BusinessPostType.announcement:
+    case BusinessPostType.serviceUpdate:
+      return const Color(0xFF0891B2);
+    case BusinessPostType.promotion:
+    case BusinessPostType.general:
+      return AppColors.primary;
   }
 }
 

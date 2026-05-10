@@ -34,7 +34,6 @@ class _MainShellScreenState extends State<MainShellScreen> {
   final Map<String, String> _taskOwnerById = <String, String>{};
   final UserTaskProgressService _progressService = UserTaskProgressService();
   String? _loadedProgressUserId;
-  bool _isProgressLoading = false;
 
   void _go(int i) => setState(() => _index = i);
 
@@ -71,21 +70,15 @@ class _MainShellScreenState extends State<MainShellScreen> {
   }
 
   Future<void> _loadProgress(String userId) async {
-    setState(() => _isProgressLoading = true);
     try {
       final snapshot = await _progressService.fetchProgress();
       if (!mounted) return;
-      if (_activeUserId() != userId) {
-        setState(() => _isProgressLoading = false);
-        return;
-      }
+      if (_activeUserId() != userId) return;
       setState(() {
         _replaceProgress(userId, snapshot);
-        _isProgressLoading = false;
       });
     } catch (_) {
-      if (!mounted) return;
-      setState(() => _isProgressLoading = false);
+      // Progress sync is best-effort; local task state still works offline.
     }
   }
 
