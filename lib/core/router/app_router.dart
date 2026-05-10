@@ -50,7 +50,7 @@ class AppRouter {
             loc == '/profile' ||
             loc == '/organizations' ||
             loc == '/tasks/add';
-        if (protected || loc == '/') return '/login';
+        if (protected) return '/login';
         return null;
       },
       routes: [

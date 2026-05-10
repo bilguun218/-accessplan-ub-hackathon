@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../shared/widgets/pastel_app_background.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../widgets/citizen_report_card.dart';
 import '../widgets/home_header.dart';
@@ -38,148 +39,108 @@ class HomeScreen extends StatelessWidget {
     final userName = _userName(context);
 
     return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFFE8D5F2),
-              Color(0xFFD8C7E8),
-              Color(0xFFCBB5DD),
-              Color(0xFFC3A3D0),
-              Color(0xFFB891C3),
-              Color(0xFFAA7FB3),
-              Color(0xFF9E70A4),
-              Color(0xFF9966A3),
-              Color(0xFF8E5FA0),
-              Color(0xFF82589E),
-              Color(0xFF76509D),
-              Color(0xFF6A489B),
-              Color(0xFF5F4199),
-              Color(0xFF5439A3),
-              Color(0xFF4A3AAE),
-              Color(0xFF4331B8),
-            ],
-            stops: [
-              0.0,
-              0.05,
-              0.1,
-              0.15,
-              0.2,
-              0.25,
-              0.3,
-              0.35,
-              0.4,
-              0.45,
-              0.5,
-              0.55,
-              0.6,
-              0.7,
-              0.85,
-              1.0,
-            ],
-          ),
-        ),
+      backgroundColor: Colors.transparent,
+      body: PastelAppBackground(
         child: SafeArea(
           bottom: false,
           child: ListView(
-          padding: const EdgeInsets.only(bottom: 24),
-          children: [
-            HomeHeader(userName: userName, onAvatarTap: onOpenProfile),
-            const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: SmartSummaryCard(onAddTask: onAddTask),
-            ),
-            const SizedBox(height: 24),
-            const _SectionTitle('Шуурхай үйлдэл'),
-            const SizedBox(height: 12),
-            _QuickActionsGrid(
-              onPlanner: onOpenPlanner,
-              onMap: onOpenMap,
-              onReports: onOpenReports,
-              onOrganizations: onOpenOrganizations,
-            ),
-            const SizedBox(height: 24),
-            const _SectionTitle('Өнөөдрийн зөвлөмж'),
-            const SizedBox(height: 12),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20),
-              child: IntrinsicHeight(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(
-                      child: InsightCard(
-                        icon: Icons.lightbulb_outline,
-                        accent: AppColors.primary,
-                        message:
-                            'Онлайнаар шийдэх боломжтой ажлуудыг эхэлж шалгаарай.',
+            padding: const EdgeInsets.only(bottom: 24),
+            children: [
+              HomeHeader(userName: userName, onAvatarTap: onOpenProfile),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: SmartSummaryCard(onAddTask: onAddTask),
+              ),
+              const SizedBox(height: 24),
+              const _SectionTitle('Шуурхай үйлдэл'),
+              const SizedBox(height: 12),
+              _QuickActionsGrid(
+                onPlanner: onOpenPlanner,
+                onMap: onOpenMap,
+                onReports: onOpenReports,
+                onOrganizations: onOpenOrganizations,
+              ),
+              const SizedBox(height: 24),
+              const _SectionTitle('Өнөөдрийн зөвлөмж'),
+              const SizedBox(height: 12),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 20),
+                child: IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        child: InsightCard(
+                          icon: Icons.lightbulb_outline,
+                          accent: AppColors.primary,
+                          message:
+                              'Онлайнаар шийдэх боломжтой ажлуудыг эхэлж шалгаарай.',
+                        ),
                       ),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: InsightCard(
+                          icon: Icons.alt_route,
+                          accent: AppColors.primary,
+                          message:
+                              'Зайлшгүй очих маршрутыг нэгтгэвэл цаг хэмнэнэ.',
+                        ),
+                      ),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: InsightCard(
+                          icon: Icons.error_outline,
+                          accent: AppColors.primary,
+                          message:
+                              'Маршрутын ойролцоох эвдрэл, саадыг шалгах боломжтой.',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              const _SectionTitle('Төлөвлөлтийн төлөв'),
+              const SizedBox(height: 12),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 20),
+                child: PlanningStatusCard(
+                  items: [
+                    PlanningStatusItem(
+                      icon: Icons.cloud_done_outlined,
+                      accent: AppColors.primary,
+                      label: 'Онлайнаар шийдэх',
+                      value: '0',
+                      description: 'Гадуур гарахгүйгээр хийх боломжтой ажил',
                     ),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: InsightCard(
-                        icon: Icons.alt_route,
-                        accent: AppColors.primary,
-                        message:
-                            'Зайлшгүй очих маршрутыг нэгтгэвэл цаг хэмнэнэ.',
-                      ),
+                    PlanningStatusItem(
+                      icon: Icons.directions_walk,
+                      accent: AppColors.primary,
+                      label: 'Заавал очих',
+                      value: '0',
+                      description: 'Биечлэн очих шаардлагатай ажил',
                     ),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: InsightCard(
-                        icon: Icons.error_outline,
-                        accent: AppColors.primary,
-                        message:
-                            'Маршрутын ойролцоох эвдрэл, саадыг шалгах боломжтой.',
-                      ),
+                    PlanningStatusItem(
+                      icon: Icons.swap_horiz,
+                      accent: AppColors.warning,
+                      label: 'Сонголттой',
+                      value: '0',
+                      description: 'Хүргэлт эсвэл онлайн хувилбартай ажил',
                     ),
                   ],
                 ),
               ),
-            ),
-            const SizedBox(height: 24),
-            const _SectionTitle('Төлөвлөлтийн төлөв'),
-            const SizedBox(height: 12),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20),
-              child: PlanningStatusCard(
-                items: [
-                  PlanningStatusItem(
-                    icon: Icons.cloud_done_outlined,
-                    accent: AppColors.primary,
-                    label: 'Онлайнаар шийдэх',
-                    value: '0',
-                    description: 'Гадуур гарахгүйгээр хийх боломжтой ажил',
-                  ),
-                  PlanningStatusItem(
-                    icon: Icons.directions_walk,
-                    accent: AppColors.primary,
-                    label: 'Заавал очих',
-                    value: '0',
-                    description: 'Биечлэн очих шаардлагатай ажил',
-                  ),
-                  PlanningStatusItem(
-                    icon: Icons.swap_horiz,
-                    accent: AppColors.warning,
-                    label: 'Сонголттой',
-                    value: '0',
-                    description: 'Хүргэлт эсвэл онлайн хувилбартай ажил',
-                  ),
-                ],
+              const SizedBox(height: 24),
+              const _SectionTitle('Иргэний оролцоо'),
+              const SizedBox(height: 12),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: CitizenReportCard(onReport: onOpenReports),
               ),
-            ),
-            const SizedBox(height: 24),
-            const _SectionTitle('Иргэний оролцоо'),
-            const SizedBox(height: 12),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: CitizenReportCard(onReport: onOpenReports),
-            ),
-            const SizedBox(height: 24),
-          ],
+              const SizedBox(height: 24),
+            ],
+          ),
         ),
       ),
     );

@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_strings.dart';
+import '../../../../shared/widgets/pastel_app_background.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../../map/presentation/screens/map_screen.dart';
 import '../../../tasks/data/models/standard_task.dart';
@@ -299,8 +300,10 @@ class _MainShellScreenState extends State<MainShellScreen> {
 
     return Scaffold(
       extendBody: true,
-      backgroundColor: AppColors.background,
-      body: IndexedStack(index: _index, children: pages),
+      backgroundColor: Colors.transparent,
+      body: PastelAppBackground(
+        child: IndexedStack(index: _index, children: pages),
+      ),
       bottomNavigationBar: MainBottomNav(currentIndex: _index, onTap: _go),
     );
   }
@@ -389,7 +392,7 @@ class _SavedTabState extends State<_SavedTab> {
     final visible = _visibleItems;
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         bottom: false,
         child: ListView(
@@ -489,10 +492,16 @@ class _RewardsTabState extends State<_RewardsTab> {
   @override
   Widget build(BuildContext context) {
     final completedCount = widget.completedTasks.length;
+    final streakItems = _buildCurrentStreakDays(
+      widget.completedTasks,
+      widget.completedAtById,
+    );
+    final streakDays = streakItems.length;
     final totalScore = _activityScore(completedCount, widget.savedCount);
     final achievements = _buildAchievements(
       completedTasks: completedCount,
       savedCount: widget.savedCount,
+      streakDays: streakDays,
     );
     final rewards = _buildRewards(totalScore);
     final completedAchievements = achievements
@@ -501,7 +510,7 @@ class _RewardsTabState extends State<_RewardsTab> {
     final unlockedRewards = rewards.where((item) => item.unlocked).length;
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         bottom: false,
         child: ListView(
@@ -519,7 +528,12 @@ class _RewardsTabState extends State<_RewardsTab> {
               weeklyScore: totalScore,
               completedTasks: completedCount,
               unlockedRewards: unlockedRewards,
+              streakDays: streakDays,
             ),
+            const SizedBox(height: 10),
+            _StreakSummaryCard(streakDays: streakDays),
+            const SizedBox(height: 10),
+            _StreakActionsCard(streakItems: streakItems),
             const SizedBox(height: 10),
             _SegmentSwitch(
               index: _tabIndex,
@@ -620,7 +634,7 @@ class _ProfileTab extends StatelessWidget {
     ];
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         bottom: false,
         child: ListView(
@@ -992,6 +1006,56 @@ String _shortDate(DateTime date) {
   return '$month/$day';
 }
 
+List<_StreakDay> _buildCurrentStreakDays(
+  List<StandardTask> completedTasks,
+  Map<String, DateTime> completedAtById,
+) {
+  if (completedTasks.isEmpty) return const <_StreakDay>[];
+
+  final actionsByDay = <DateTime, List<_StreakAction>>{};
+  for (final task in completedTasks) {
+    final completedAt = completedAtById[task.id];
+    if (completedAt == null) continue;
+    final day = _dateOnly(completedAt);
+    actionsByDay
+        .putIfAbsent(day, () => <_StreakAction>[])
+        .add(_StreakAction(task: task, completedAt: completedAt));
+  }
+  if (actionsByDay.isEmpty) return const <_StreakDay>[];
+
+  final today = _dateOnly(DateTime.now());
+  var cursor = actionsByDay.containsKey(today)
+      ? today
+      : today.subtract(const Duration(days: 1));
+  final streakDays = <_StreakDay>[];
+
+  while (actionsByDay.containsKey(cursor)) {
+    final actions = [...actionsByDay[cursor]!]
+      ..sort((a, b) => b.completedAt.compareTo(a.completedAt));
+    streakDays.add(_StreakDay(day: cursor, actions: actions));
+    cursor = cursor.subtract(const Duration(days: 1));
+  }
+
+  return streakDays;
+}
+
+DateTime _dateOnly(DateTime value) =>
+    DateTime(value.year, value.month, value.day);
+
+class _StreakAction {
+  final StandardTask task;
+  final DateTime completedAt;
+
+  const _StreakAction({required this.task, required this.completedAt});
+}
+
+class _StreakDay {
+  final DateTime day;
+  final List<_StreakAction> actions;
+
+  const _StreakDay({required this.day, required this.actions});
+}
+
 class _Achievement {
   final String id;
   final IconData icon;
@@ -1031,6 +1095,7 @@ class _RewardItem {
 List<_Achievement> _buildAchievements({
   required int completedTasks,
   required int savedCount,
+  int streakDays = 0,
 }) {
   return <_Achievement>[
     _Achievement(
@@ -1056,6 +1121,14 @@ List<_Achievement> _buildAchievements({
       subtitle: 'Дахин ашиглах ажлаа хадгалсан',
       points: 60,
       completed: savedCount >= 1,
+    ),
+    _Achievement(
+      id: 'three_day_streak',
+      icon: Icons.local_fire_department_rounded,
+      title: '3 өдрийн streak',
+      subtitle: '3 өдөр дараалан ажил дуусгавал нээгдэнэ',
+      points: 90,
+      completed: streakDays >= 3,
     ),
     _Achievement(
       id: 'city_friendly',
@@ -1216,12 +1289,14 @@ class _RewardStatsGrid extends StatelessWidget {
   final int weeklyScore;
   final int completedTasks;
   final int unlockedRewards;
+  final int streakDays;
 
   const _RewardStatsGrid({
     required this.totalScore,
     required this.weeklyScore,
     required this.completedTasks,
     required this.unlockedRewards,
+    required this.streakDays,
   });
 
   @override
@@ -1275,6 +1350,16 @@ class _RewardStatsGrid extends StatelessWidget {
                 value: '$unlockedRewards',
                 color: const Color(0xFF9333EA),
                 background: const Color(0xFFFBF1FF),
+              ),
+            ),
+            SizedBox(
+              width: itemWidth,
+              child: _RewardStatTile(
+                icon: Icons.local_fire_department_rounded,
+                label: 'Streak',
+                value: '$streakDays өдөр',
+                color: const Color(0xFFEF4444),
+                background: const Color(0xFFFFF1F2),
               ),
             ),
           ],
@@ -1353,6 +1438,274 @@ class _RewardStatTile extends StatelessWidget {
       ),
     );
   }
+}
+
+class _StreakSummaryCard extends StatelessWidget {
+  final int streakDays;
+
+  const _StreakSummaryCard({required this.streakDays});
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = (streakDays / 7).clamp(0.0, 1.0);
+    final remaining = streakDays >= 7 ? 0 : 7 - streakDays;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: _cardDecoration(radius: 18),
+      child: Row(
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: const BoxDecoration(
+              color: Color(0xFFFFF1F2),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.local_fire_department_rounded,
+              color: Color(0xFFEF4444),
+              size: 30,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  streakDays == 0
+                      ? 'Streak эхлээгүй'
+                      : '$streakDays өдөр дараалсан streak',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppColors.textDark,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  remaining == 0
+                      ? '7 өдрийн streak badge нээгдсэн'
+                      : '7 өдрийн badge хүртэл $remaining өдөр',
+                  style: const TextStyle(
+                    color: AppColors.textMuted,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 9),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: LinearProgressIndicator(
+                    minHeight: 7,
+                    value: progress,
+                    backgroundColor: const Color(0xFFFFE4E6),
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                      Color(0xFFEF4444),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StreakActionsCard extends StatelessWidget {
+  final List<_StreakDay> streakItems;
+
+  const _StreakActionsCard({required this.streakItems});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: _cardDecoration(radius: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Row(
+            children: [
+              Icon(
+                Icons.fact_check_outlined,
+                color: Color(0xFFEF4444),
+                size: 20,
+              ),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Streak хийсэн үйлдлүүд',
+                  style: TextStyle(
+                    color: AppColors.textDark,
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (streakItems.isEmpty)
+            const Text(
+              'Ажил дуусгахад энд streak үүсгэсэн үйлдлүүд харагдана.',
+              style: TextStyle(
+                color: AppColors.textMuted,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+              ),
+            )
+          else
+            for (final item in streakItems) ...[
+              _StreakDayBlock(item: item),
+              if (item != streakItems.last) const SizedBox(height: 10),
+            ],
+        ],
+      ),
+    );
+  }
+}
+
+class _StreakDayBlock extends StatelessWidget {
+  final _StreakDay item;
+
+  const _StreakDayBlock({required this.item});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7F7),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFFFE4E6)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.calendar_today_rounded,
+                color: Color(0xFFEF4444),
+                size: 15,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  _streakDayLabel(item.day),
+                  style: const TextStyle(
+                    color: AppColors.textDark,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              Text(
+                '${item.actions.length} үйлдэл',
+                style: const TextStyle(
+                  color: AppColors.textMuted,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (final action in item.actions) ...[
+            _StreakActionRow(action: action),
+            if (action != item.actions.last) const SizedBox(height: 7),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _StreakActionRow extends StatelessWidget {
+  final _StreakAction action;
+
+  const _StreakActionRow({required this.action});
+
+  @override
+  Widget build(BuildContext context) {
+    final task = action.task;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 22,
+          height: 22,
+          decoration: const BoxDecoration(
+            color: Color(0xFFFFE4E6),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(
+            Icons.check_rounded,
+            color: Color(0xFFEF4444),
+            size: 15,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                task.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppColors.textDark,
+                  fontSize: 12.8,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                '${_clockLabel(action.completedAt)} · ${_taskDescription(task)}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppColors.textMuted,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          '+${_taskPoints(task)}',
+          style: const TextStyle(
+            color: Color(0xFFEF4444),
+            fontSize: 12,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+String _streakDayLabel(DateTime day) {
+  final today = _dateOnly(DateTime.now());
+  final normalized = _dateOnly(day);
+  if (normalized == today) return 'Өнөөдөр';
+  if (normalized == today.subtract(const Duration(days: 1))) return 'Өчигдөр';
+  return '${normalized.month}/${normalized.day}';
+}
+
+String _clockLabel(DateTime value) {
+  final hour = value.hour.toString().padLeft(2, '0');
+  final minute = value.minute.toString().padLeft(2, '0');
+  return '$hour:$minute';
 }
 
 class _SegmentSwitch extends StatelessWidget {

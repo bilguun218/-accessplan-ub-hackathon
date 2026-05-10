@@ -1,7 +1,7 @@
 class AppStrings {
   AppStrings._();
 
-  static const appName = 'AccessPlan UB';
+  static const appName = 'duh';
   static const appSubtitle =
       'Өдөр тутмын ажлаа ухаалгаар төлөвлөж, шаардлагагүй зорчилтыг багасгана.';
 

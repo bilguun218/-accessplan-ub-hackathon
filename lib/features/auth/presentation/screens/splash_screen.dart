@@ -44,7 +44,7 @@ class _SplashScreenState extends State<SplashScreen> {
                 ),
                 const SizedBox(height: 48),
                 const Text(
-                  'AccessPlan UB',
+                  'duh',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: AppColors.textDark,

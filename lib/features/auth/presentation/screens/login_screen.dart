@@ -19,6 +19,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   var _userType = 'general';
+  var _obscurePassword = true;
 
   @override
   void dispose() {
@@ -59,10 +60,10 @@ class _LoginScreenState extends State<LoginScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const Text(
-                    'AccessPlan UB',
+                    '',
                     style: TextStyle(
                       color: Colors.black,
-                      fontSize: 22,
+                      fontSize: 40,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
@@ -101,10 +102,30 @@ class _LoginScreenState extends State<LoginScreen> {
                     label: 'Нууц үг',
                     hint: '••••••••',
                     controller: _passwordCtrl,
-                    obscureText: true,
+                    obscureText: _obscurePassword,
                     validator: Validators.loginPassword,
                     textInputAction: TextInputAction.done,
                     onSubmitted: (_) => auth.isLoading ? null : _submit(),
+                    suffixIcon: IconButton(
+                      constraints: const BoxConstraints.tightFor(
+                        width: 36,
+                        height: 36,
+                      ),
+                      padding: EdgeInsets.zero,
+                      visualDensity: VisualDensity.compact,
+                      iconSize: 20,
+                      tooltip: _obscurePassword
+                          ? 'Нууц үг харах'
+                          : 'Нууц үг нуух',
+                      onPressed: () =>
+                          setState(() => _obscurePassword = !_obscurePassword),
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 24),
                   const Text(
@@ -210,6 +231,7 @@ class _LoginField extends StatelessWidget {
   final String? Function(String?)? validator;
   final bool obscureText;
   final ValueChanged<String>? onSubmitted;
+  final Widget? suffixIcon;
 
   const _LoginField({
     required this.label,
@@ -220,6 +242,7 @@ class _LoginField extends StatelessWidget {
     this.validator,
     this.obscureText = false,
     this.onSubmitted,
+    this.suffixIcon,
   });
 
   @override
@@ -263,6 +286,11 @@ class _LoginField extends StatelessWidget {
               ),
               border: InputBorder.none,
               contentPadding: const EdgeInsets.only(top: 7, bottom: 1),
+              suffixIcon: suffixIcon,
+              suffixIconConstraints: const BoxConstraints(
+                minWidth: 36,
+                minHeight: 36,
+              ),
             ),
           ),
         ],

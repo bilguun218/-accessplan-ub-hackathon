@@ -9,7 +9,6 @@ import '../../data/models/standard_task.dart';
 import '../../data/services/task_parse_service.dart';
 
 const _primaryBlue = Color(0xFF2563EB);
-const _surfaceTint = Color(0xFFF6F9FD);
 
 class AddTaskScreen extends StatefulWidget {
   final List<StandardTask> recentTasks;
@@ -215,126 +214,81 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     );
 
     return Scaffold(
-      backgroundColor: _surfaceTint,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         bottom: false,
         child: ListView(
           padding: const EdgeInsets.only(bottom: 118),
           children: [
             Container(
-              color: Colors.white,
-              padding: const EdgeInsets.fromLTRB(18, 14, 18, 20),
-              child: Column(
+              padding: const EdgeInsets.fromLTRB(18, 8, 18, 18),
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Сайн байна уу,',
+                          style: TextStyle(
+                            color: AppColors.textMuted,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '$userName 👋',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppColors.textDark,
+                            fontSize: 24,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Stack(
+                    clipBehavior: Clip.none,
                     children: [
                       Container(
-                        width: 48,
-                        height: 48,
+                        width: 42,
+                        height: 42,
                         decoration: BoxDecoration(
-                          color: _primaryBlue,
-                          borderRadius: BorderRadius.circular(14),
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: AppColors.border),
                           boxShadow: [
                             BoxShadow(
-                              color: _primaryBlue.withValues(alpha: 0.20),
+                              color: Colors.black.withValues(alpha: 0.04),
                               blurRadius: 12,
-                              offset: const Offset(0, 6),
+                              offset: const Offset(0, 4),
                             ),
                           ],
                         ),
                         child: const Icon(
-                          Icons.location_on_outlined,
-                          color: Colors.white,
-                          size: 27,
+                          Icons.notifications_none_rounded,
+                          color: AppColors.textDark,
+                          size: 24,
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'AccessPlan UB',
-                              style: TextStyle(
-                                fontSize: 19,
-                                fontWeight: FontWeight.w900,
-                                color: AppColors.textDark,
-                              ),
-                            ),
-                            SizedBox(height: 4),
-                            Text(
-                              'Саадгүй хотын ухаалаг төлөвлөгөө',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: Color(0xFF9AA3B2),
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
+                      Positioned(
+                        top: 9,
+                        right: 9,
+                        child: Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFFFF3B4E),
+                            shape: BoxShape.circle,
+                          ),
                         ),
-                      ),
-                      Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          Container(
-                            width: 42,
-                            height: 42,
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: AppColors.border),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.04),
-                                  blurRadius: 12,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ],
-                            ),
-                            child: const Icon(
-                              Icons.notifications_none_rounded,
-                              color: AppColors.textDark,
-                              size: 24,
-                            ),
-                          ),
-                          Positioned(
-                            top: 9,
-                            right: 9,
-                            child: Container(
-                              width: 8,
-                              height: 8,
-                              decoration: const BoxDecoration(
-                                color: Color(0xFFFF3B4E),
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                          ),
-                        ],
                       ),
                     ],
-                  ),
-                  const SizedBox(height: 20),
-                  const Text(
-                    'Сайн байна уу,',
-                    style: TextStyle(
-                      color: AppColors.textMuted,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '$userName 👋',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: AppColors.textDark,
-                      fontSize: 24,
-                      fontWeight: FontWeight.w900,
-                    ),
                   ),
                 ],
               ),

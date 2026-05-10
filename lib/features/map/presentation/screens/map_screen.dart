@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -84,8 +85,10 @@ class _MapScreenState extends State<MapScreen> {
   bool _showPromotions = true;
   bool _isSearching = false;
   bool _isLoadingPlace = false;
+  double _cameraBearing = 0;
 
   MapType _mapType = MapType.normal;
+  CameraPosition? _lastCameraPosition;
 
   List<PlacePredictionModel> _suggestions = <PlacePredictionModel>[];
 
@@ -108,6 +111,8 @@ class _MapScreenState extends State<MapScreen> {
   List<StandardTask> _routableTasks = <StandardTask>[];
   List<StandardTask> _promotionTasks = <StandardTask>[];
   List<ExtractedTaskModel> _extractedTasks = <ExtractedTaskModel>[];
+  ExtractedTaskModel? _pendingTaskForLocation;
+  String? _pendingTaskOriginalQuery;
 
   late CameraPosition _initialCameraPosition;
   bool _locationLoaded = false;
@@ -129,6 +134,7 @@ class _MapScreenState extends State<MapScreen> {
       target: LatLng(47.918873, 106.917701),
       zoom: _defaultZoom,
     );
+    _lastCameraPosition = _initialCameraPosition;
     _prepareLocationIcons();
     _initPromotionMarkerIcons();
     _initLocation();
@@ -409,6 +415,7 @@ class _MapScreenState extends State<MapScreen> {
           target: currentLatLng,
           zoom: 16,
         );
+        _lastCameraPosition = _initialCameraPosition;
         _locationLoaded = true;
       }
 
@@ -935,6 +942,38 @@ class _MapScreenState extends State<MapScreen> {
     });
   }
 
+  void _onCameraMove(CameraPosition position) {
+    _lastCameraPosition = position;
+    final bearing = position.bearing;
+    if ((bearing - _cameraBearing).abs() < 0.5) return;
+    setState(() {
+      _cameraBearing = bearing;
+    });
+  }
+
+  Future<void> _resetCompass() async {
+    final controller = _controller ?? await _controllerCompleter.future;
+    final position = _lastCameraPosition ?? _initialCameraPosition;
+    await controller.animateCamera(
+      CameraUpdate.newCameraPosition(
+        CameraPosition(
+          target: position.target,
+          zoom: position.zoom,
+          tilt: 0,
+          bearing: 0,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    setState(() {
+      _cameraBearing = 0;
+      _lastCameraPosition = CameraPosition(
+        target: position.target,
+        zoom: position.zoom,
+      );
+    });
+  }
+
   void _changeMapType(MapType type) {
     setState(() {
       _mapType = type;
@@ -1042,6 +1081,9 @@ class _MapScreenState extends State<MapScreen> {
     if (query.isEmpty) {
       setState(() {
         _suggestions = [];
+        _extractedTasks = [];
+        _pendingTaskForLocation = null;
+        _pendingTaskOriginalQuery = null;
         _isSearching = false;
         _errorMessage = null;
       });
@@ -1050,6 +1092,8 @@ class _MapScreenState extends State<MapScreen> {
     }
 
     setState(() {
+      _pendingTaskForLocation = null;
+      _pendingTaskOriginalQuery = null;
       _isSearching = true;
       _errorMessage = null;
     });
@@ -1096,68 +1140,152 @@ class _MapScreenState extends State<MapScreen> {
     List<ExtractedTaskModel> extractedTasks,
     String originalQuery,
   ) async {
-    final newTasks = <StandardTask>[];
+    final query = originalQuery.trim();
+    if (query.isEmpty && extractedTasks.isEmpty) return;
 
-    for (var i = 0; i < extractedTasks.length; i++) {
-      final extracted = extractedTasks[i];
+    final extracted = extractedTasks.isNotEmpty
+        ? extractedTasks.first
+        : ExtractedTaskModel(
+            taskName: query,
+            rawText: query,
+            confidenceScore: 0,
+          );
 
-      if (extracted.taskName == null || extracted.taskName!.isEmpty) {
-        continue;
-      }
-
-      // Determine location query
-      final locationQuery =
-          extracted.branch ??
-          extracted.organization ??
-          (extracted.extractedEntities['location'] as String?) ??
-          extracted.taskName ??
-          originalQuery;
-
-      // Create a StandardTask from the extracted data
-      final task = StandardTask(
-        id: 'nlp_${DateTime.now().millisecondsSinceEpoch}_$i',
-        order: _activeRouteTasks.length + newTasks.length + 1,
-        title: extracted.taskName ?? 'Task',
-        category: extracted.organization ?? 'Other',
-        locationText: locationQuery,
-        timeText: 'Today',
-        priority: _mapTaskPriority(extracted.priority),
-        needsPlaceSearch: true,
-        placeSearchQuery: locationQuery,
-        source: TaskSource.ai,
-        notes: extracted.rawText,
-      );
-
-      newTasks.add(task);
-    }
-
-    if (newTasks.isEmpty) {
-      return;
-    }
-
-    // Add new tasks to the route
-    setState(() {
-      _promotionTasks = [..._promotionTasks, ...newTasks];
-      _selectedPlace = null;
-      _placeRoutePolylines = <Polyline>{};
-      _extractedTasks = [];
-    });
-
-    // Rebuild the route with new tasks
-    await _buildRouteForTasks();
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${newTasks.length} ажил нэмэгдлээ'),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+    await _showLocationSuggestionsForTask(extracted, query);
   }
 
   Future<void> _addCurrentExtractedTasks() async {
-    if (_extractedTasks.isEmpty) return;
-    await _addExtractedTasksToRoute(_extractedTasks, _searchCtrl.text.trim());
+    final query = _searchCtrl.text.trim();
+    if (query.isEmpty) return;
+    await _addExtractedTasksToRoute(_extractedTasks, query);
+  }
+
+  Future<void> _showLocationSuggestionsForTask(
+    ExtractedTaskModel task,
+    String originalQuery,
+  ) async {
+    final locationQuery = _locationQueryForTask(task, originalQuery);
+    if (locationQuery.isEmpty) return;
+
+    _searchCtrl.value = TextEditingValue(
+      text: locationQuery,
+      selection: TextSelection.collapsed(offset: locationQuery.length),
+    );
+
+    setState(() {
+      _pendingTaskForLocation = task;
+      _pendingTaskOriginalQuery = originalQuery;
+      _extractedTasks = [];
+      _suggestions = [];
+      _isSearching = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final suggestions = await _mapApiService.autocomplete(locationQuery);
+      if (!mounted) return;
+      if (_pendingTaskForLocation != task) return;
+      setState(() {
+        _suggestions = suggestions;
+        _isSearching = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _suggestions = [];
+        _isSearching = false;
+        _errorMessage = 'Байршлын санал олдсонгүй.';
+      });
+    }
+  }
+
+  String _locationQueryForTask(ExtractedTaskModel task, String originalQuery) {
+    final entityLocation = task.extractedEntities['location'];
+    return <String?>[
+          task.branch,
+          task.organization,
+          entityLocation is String ? entityLocation : null,
+          task.taskName,
+          originalQuery,
+        ]
+        .map((value) => value?.trim() ?? '')
+        .firstWhere((value) => value.isNotEmpty, orElse: () => '');
+  }
+
+  Future<void> _addPendingTaskFromSuggestion(
+    PlacePredictionModel prediction,
+  ) async {
+    final pendingTask = _pendingTaskForLocation;
+    if (pendingTask == null) return;
+
+    setState(() {
+      _isLoadingPlace = true;
+      _isSearching = false;
+      _errorMessage = null;
+    });
+
+    try {
+      final detail = await _mapApiService.getPlaceDetails(prediction.placeId);
+      if (!mounted) return;
+
+      final fallbackTitle = _pendingTaskOriginalQuery?.trim().isNotEmpty == true
+          ? _pendingTaskOriginalQuery!.trim()
+          : detail.name;
+      final title = pendingTask.taskName?.trim().isNotEmpty == true
+          ? pendingTask.taskName!.trim()
+          : fallbackTitle;
+      final category = pendingTask.organization?.trim().isNotEmpty == true
+          ? pendingTask.organization!.trim()
+          : (detail.category.isNotEmpty ? detail.category : 'Бусад');
+      final notes = pendingTask.rawText.trim().isNotEmpty
+          ? pendingTask.rawText.trim()
+          : fallbackTitle;
+
+      final task = StandardTask(
+        id: 'manual_${DateTime.now().millisecondsSinceEpoch}',
+        order: _activeRouteTasks.length + 1,
+        title: title,
+        category: category,
+        locationText: detail.name,
+        timeText: 'Today',
+        priority: _mapTaskPriority(pendingTask.priority),
+        needsPlaceSearch: false,
+        placeSearchQuery: detail.name,
+        source: pendingTask.confidenceScore > 0
+            ? TaskSource.ai
+            : TaskSource.manual,
+        lat: detail.latitude,
+        lng: detail.longitude,
+        notes: notes,
+      );
+
+      setState(() {
+        _promotionTasks = [..._promotionTasks, task];
+        _pendingTaskForLocation = null;
+        _pendingTaskOriginalQuery = null;
+        _selectedPlace = null;
+        _suggestions = [];
+        _extractedTasks = [];
+        _searchCtrl.clear();
+        _placeRoutePolylines = <Polyline>{};
+        _isLoadingPlace = false;
+      });
+
+      await _buildRouteForTasks();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Ажил байршилтай нэмэгдлээ'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingPlace = false;
+        _errorMessage = 'Байршлын мэдээлэл авч чадсангүй.';
+      });
+    }
   }
 
   StandardTaskPriority _mapTaskPriority(TaskPriority? priority) {
@@ -1182,6 +1310,8 @@ class _MapScreenState extends State<MapScreen> {
       _isSearching = false;
       _errorMessage = null;
       _extractedTasks = [];
+      _pendingTaskForLocation = null;
+      _pendingTaskOriginalQuery = null;
       _selectedPlace = null;
       _markers = <Marker>{};
       _placeRoutePolylines = <Polyline>{};
@@ -1244,6 +1374,11 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<void> _onSuggestionTap(PlacePredictionModel prediction) async {
+    if (_pendingTaskForLocation != null) {
+      await _addPendingTaskFromSuggestion(prediction);
+      return;
+    }
+
     _searchDebounce?.cancel();
 
     FocusScope.of(context).unfocus();
@@ -1785,6 +1920,7 @@ class _MapScreenState extends State<MapScreen> {
             myLocationButtonEnabled: false,
             zoomControlsEnabled: false,
             compassEnabled: true,
+            onCameraMove: _onCameraMove,
             padding: EdgeInsets.only(
               top: viewPadding.top + 94,
               bottom: _segments.isEmpty ? 24 : 430,
@@ -1830,6 +1966,7 @@ class _MapScreenState extends State<MapScreen> {
                       errorMessage: _errorMessage,
                       suggestions: _suggestions,
                       extractedTasks: _extractedTasks,
+                      pendingTask: _pendingTaskForLocation,
                       hasQuery: _searchCtrl.text.trim().isNotEmpty,
                       onTap: _onSuggestionTap,
                       onAddExtractedTasks: _addCurrentExtractedTasks,
@@ -1844,6 +1981,13 @@ class _MapScreenState extends State<MapScreen> {
             right: 16,
             child: Column(
               children: [
+                _CompassFloatingButton(
+                  bearing: _cameraBearing,
+                  onTap: _resetCompass,
+                ),
+
+                const SizedBox(height: 10),
+
                 _MapFloatingButton(
                   icon: _trafficEnabled
                       ? Icons.traffic_rounded
@@ -2828,6 +2972,7 @@ class _SuggestionPanel extends StatelessWidget {
   final String? errorMessage;
   final List<PlacePredictionModel> suggestions;
   final List<ExtractedTaskModel> extractedTasks;
+  final ExtractedTaskModel? pendingTask;
   final bool hasQuery;
   final Function(PlacePredictionModel) onTap;
   final VoidCallback onAddExtractedTasks;
@@ -2837,6 +2982,7 @@ class _SuggestionPanel extends StatelessWidget {
     required this.errorMessage,
     required this.suggestions,
     required this.extractedTasks,
+    required this.pendingTask,
     required this.hasQuery,
     required this.onTap,
     required this.onAddExtractedTasks,
@@ -2886,6 +3032,56 @@ class _SuggestionPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final taskForLocation = pendingTask;
+    if (taskForLocation != null && suggestions.isNotEmpty) {
+      return Material(
+        color: Colors.transparent,
+        child: Container(
+          decoration: _panelDecoration(),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(18),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 320),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.add_location_alt_rounded,
+                          size: 18,
+                          color: AppColors.primary,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            taskForLocation.taskName?.isNotEmpty == true
+                                ? '${taskForLocation.taskName} - байршил сонго'
+                                : 'Байршил сонго',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w800,
+                              color: AppColors.textDark,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  Flexible(child: _buildSuggestionsList()),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     // Show extracted tasks with add button
     if (extractedTasks.isNotEmpty) {
       return Material(
@@ -2931,7 +3127,10 @@ class _SuggestionPanel extends StatelessWidget {
                             width: double.infinity,
                             child: ElevatedButton.icon(
                               onPressed: onAddExtractedTasks,
-                              icon: const Icon(Icons.add_rounded, size: 20),
+                              icon: const Icon(
+                                Icons.add_location_alt_rounded,
+                                size: 20,
+                              ),
                               label: Text(
                                 'ажлууд нэмэх (${extractedTasks.length})',
                               ),
@@ -3204,6 +3403,56 @@ class _MapFloatingButton extends StatelessWidget {
               icon,
               color: isActive ? Colors.white : AppColors.textDark,
               size: 22,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CompassFloatingButton extends StatelessWidget {
+  final double bearing;
+  final VoidCallback onTap;
+
+  const _CompassFloatingButton({required this.bearing, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final isRotated = bearing.abs() > 1;
+    return Tooltip(
+      message: 'Compass',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: isRotated ? AppColors.primary : Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.13),
+                  blurRadius: 14,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+              border: Border.all(
+                color: isRotated
+                    ? AppColors.primary
+                    : Colors.black.withValues(alpha: 0.06),
+              ),
+            ),
+            child: Transform.rotate(
+              angle: -bearing * math.pi / 180,
+              child: Icon(
+                Icons.explore_rounded,
+                color: isRotated ? Colors.white : AppColors.textDark,
+                size: 23,
+              ),
             ),
           ),
         ),

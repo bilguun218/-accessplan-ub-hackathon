@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../shared/widgets/pastel_app_background.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import '../../data/models/business_models.dart';
 import '../providers/business_provider.dart';
@@ -39,15 +40,17 @@ class _BusinessShellScreenState extends State<BusinessShellScreen> {
     return BusinessTextScale(
       child: Scaffold(
         extendBody: true,
-        backgroundColor: const Color(0xFFF6F9FD),
-        body: IndexedStack(
-          index: _index,
-          children: [
-            const _HomeTab(),
-            const _RewardsTab(),
-            const _StatsTab(),
-            _ProfileTab(onOpenInfo: () => context.push('/business/info')),
-          ],
+        backgroundColor: Colors.transparent,
+        body: PastelAppBackground(
+          child: IndexedStack(
+            index: _index,
+            children: [
+              const _HomeTab(),
+              const _RewardsTab(),
+              const _StatsTab(),
+              _ProfileTab(onOpenInfo: () => context.push('/business/info')),
+            ],
+          ),
         ),
         bottomNavigationBar: _BusinessNav(
           index: _index,
@@ -74,12 +77,9 @@ class _HomeTab extends StatelessWidget {
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
-            ColoredBox(
-              color: Colors.white,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 28, 20, 30),
-                child: _HomeHeader(profile: profile),
-              ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 28, 20, 30),
+              child: _HomeHeader(profile: profile),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 24, 20, 126),
