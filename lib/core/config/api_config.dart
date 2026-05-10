@@ -10,7 +10,7 @@ class ApiConfig {
     if (_envBaseUrl.isNotEmpty) return _envBaseUrl;
     if (kIsWeb) return 'http://localhost:5000/api';
     if (defaultTargetPlatform == TargetPlatform.android) {
-      return 'http://10.0.2.2:5000/api';
+      return 'http://172.20.10.3:5000/api';
     }
     return 'http://localhost:5000/api';
   }
